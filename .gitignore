@@ -1,0 +1,13 @@
+*.db
+*.xlsx
+*.csv
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.streamlit/secrets.toml
+.DS_Store
+Thumbs.db
+*.log
+.env
