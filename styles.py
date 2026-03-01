@@ -1,391 +1,800 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# TFF PERFORMANS SİSTEMİ - STİL SİSTEMİ
-# ═══════════════════════════════════════════════════════════════════════════════
+"""
+TFF Atletik Performans Sistemi — Tasarım Sistemi v4.9 (Full Entegre)
+Kullanım: from styles import inject_styles, page_header, section_title, ...
+"""
 
-import streamlit as st
-from config import COLORS
+import base64, os
+from config import COLORS, PLAYER_PALETTE
 
-# ─── GLOBAL CSS İNJEKSİYONU ─────────────────────────────────────────────────────
+# ── ASSETS YÖNETİMİ (Yerel Dosyaları Okur) ────────────────────────────────────
+
+def get_local_img(file_name):
+    """Assets klasöründeki dosyayı güvenle okur ve Base64'e çevirir."""
+    # Dosya yollarını kontrol et (assets/ veya ana dizin)
+    path = os.path.join("assets", file_name)
+    if not os.path.exists(path):
+        path = file_name
+        
+    if os.path.exists(path):
+        try:
+            with open(path, "rb") as f:
+                data = base64.b64encode(f.read()).decode()
+            ext = file_name.split(".")[-1].lower().replace("jpg", "jpeg")
+            return f"data:image/{ext};base64,{data}"
+        except Exception:
+            return ""
+    return ""
+
+# ── TFF Logo SVG (Güvenilir Yedek) ────────────────────────────────────────────
+_TFF_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 140">
+  <defs><clipPath id="shield"><path d="M60 4 L112 26 L112 80 Q112 122 60 138 Q8 122 8 80 L8 26 Z"/></clipPath></defs>
+  <path d="M60 4 L112 26 L112 80 Q112 122 60 138 Q8 122 8 80 L8 26 Z" fill="#E30A17"/>
+  <polygon points="8,95 112,52 112,80 60,138 8,115" fill="white" clip-path="url(#shield)"/>
+  <circle cx="48" cy="48" r="18" fill="white"/>
+  <circle cx="54" cy="43" r="14" fill="#E30A17"/>
+  <polygon points="74,32 76,39 83,39 77,44 79,51 74,46 69,51 71,44 65,39 72,39" fill="white"/>
+  <circle cx="72" cy="100" r="22" fill="white" stroke="#E30A17" stroke-width="1.5"/>
+  <path d="M72,78 C80,85 82,95 72,122 C62,95 64,85 72,78Z" fill="#222" opacity="0.5"/>
+  <line x1="50" y1="97" x2="94" y2="97" stroke="#222" stroke-width="1.2" opacity="0.4"/>
+</svg>"""
+
+_TFF_LOGO_B64 = base64.b64encode(_TFF_SVG.encode()).decode()
+
+def get_logo_src():
+    """Önce assets klasöründeki logoyu arar, bulamazsa SVG döner."""
+    src = get_local_img("TFF_logo.png")
+    if not src:
+        src = get_local_img("TFF.png")
+    return src if src else f"data:image/svg+xml;base64,{_TFF_LOGO_B64}"
+
+def _logo_tag(h=48):
+    src = get_logo_src()
+    return f'<img src="{src}" style="height:{h}px;">'
+
+
 def inject_styles():
-    """Tüm sayfaya uygulanacak CSS'i enjekte eder"""
+    import streamlit as st
+    logo_main = get_logo_src()
+    logo_header = get_local_img("TFF_yatay.png")
+    flag_tr = get_local_img("bayrak.png")
+    
     st.markdown(f"""
-    <style>
-    /* ─── GENEL AYARLAR ─── */
-    * {{
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-    }}
-    
-    html, body, [data-testid="stAppViewContainer"] {{
-        background-color: {COLORS['GRAY_50']};
-        font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    }}
-    
-    /* ─── SIDEBAR STİLİ ─── */
-    [data-testid="stSidebar"] {{
-        background: linear-gradient(135deg, {COLORS['DARK']} 0%, #1a1a1a 100%);
-        border-right: 3px solid {COLORS['RED']};
-    }}
-    
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {{
-        color: {COLORS['WHITE']};
-    }}
-    
-    [data-testid="stSidebar"] label {{
-        color: {COLORS['WHITE']} !important;
-    }}
-    
-    [data-testid="stSidebar"] .stSelectbox, 
-    [data-testid="stSidebar"] .stNumberInput {{
-        color: {COLORS['WHITE']};
-    }}
-    
-    /* ─── SEÇİM KAISIYETLERİ STİLİ ─── */
-    [data-testid="stSidebar"] .stSelectbox > div,
-    [data-testid="stSidebar"] .stNumberInput > div {{
-        background-color: rgba(255,255,255,0.1);
-        border: 1px solid {COLORS['RED']};
-        border-radius: 8px;
-        color: {COLORS['WHITE']};
-    }}
-    
-    [data-testid="stSidebar"] .stSelectbox div[role="listbox"] {{
-        background-color: {COLORS['DARK']};
-        color: {COLORS['WHITE']};
-    }}
-    
-    /* ─── BUTTON STİLLERİ ─── */
-    [data-testid="stSidebar"] .stButton > button {{
-        background: linear-gradient(135deg, {COLORS['RED']} 0%, #c40810 100%);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        font-weight: 700;
-        letter-spacing: 0.5px;
-        transition: all 0.3s ease;
-        padding: 12px 20px;
-    }}
-    
-    [data-testid="stSidebar"] .stButton > button:hover {{
-        transform: translateY(-2px);
-        box-shadow: 0 8px 16px rgba(227,10,23,0.3);
-    }}
-    
-    /* ─── SIDEBAR ETIKETLER ─── */
-    .sidebar-label {{
-        font-family: 'Bebas Neue', sans-serif;
-        font-size: 13px;
-        font-weight: 800;
-        letter-spacing: 2px;
-        color: {COLORS['WHITE']};
-        text-transform: uppercase;
-        padding: 16px 0 8px 0;
-        border-bottom: 2px solid {COLORS['RED']};
-        margin-bottom: 12px;
-    }}
-    
-    /* ─── METRIK KARTLARI ─── */
-    .metric-card {{
-        background: {COLORS['WHITE']};
-        border: 1px solid {COLORS['GRAY_200']};
-        border-radius: 12px;
-        padding: 16px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-        transition: all 0.3s ease;
-    }}
-    
-    .metric-card:hover {{
-        transform: translateY(-4px);
-        box-shadow: 0 8px 16px rgba(227,10,23,0.12);
-        border-color: {COLORS['RED']};
-    }}
-    
-    .sc-label {{
-        font-size: 10px;
-        font-weight: 800;
-        text-transform: uppercase;
-        color: {COLORS['GRAY_500']};
-        letter-spacing: 1px;
-    }}
-    
-    .sc-val {{
-        font-family: 'Bebas Neue', sans-serif;
-        font-size: 28px;
-        color: {COLORS['RED']};
-        font-weight: 700;
-        margin-top: 4px;
-        letter-spacing: 1px;
-    }}
-    
-    /* ─── YAŞGRUBU KARTLARI ─── */
-    .ag-card {{
-        background: white;
-        border: 1px solid {COLORS['GRAY_200']};
-        border-radius: 12px;
-        padding: 20px;
-        text-align: center;
-        transition: all 0.3s ease;
-    }}
-    
-    .ag-card.has-data {{
-        cursor: pointer;
-    }}
-    
-    .ag-card.has-data:hover {{
-        transform: translateY(-6px);
-        box-shadow: 0 12px 24px rgba(227,10,23,0.15);
-        border-color: {COLORS['RED']};
-    }}
-    
-    .ag-card.no-data {{
-        opacity: 0.5;
-        background: {COLORS['GRAY_50']};
-        border-style: dashed;
-    }}
-    
-    .ag-label {{
-        font-family: 'Bebas Neue', sans-serif;
-        font-size: 32px;
-        letter-spacing: 2px;
-        color: {COLORS['GRAY_900']};
-        margin-bottom: 8px;
-    }}
-    
-    .ag-stat {{
-        font-size: 12px;
-        color: {COLORS['GRAY_600']};
-        font-weight: 700;
-        letter-spacing: 0.5px;
-    }}
-    
-    /* ─── FOOTER ─── */
-    .tff-footer {{
-        text-align: center;
-        padding: 30px;
-        margin-top: 50px;
-        border-top: 2px solid {COLORS['GRAY_200']};
-        background: {COLORS['GRAY_50']};
-        border-radius: 12px;
-    }}
-    
-    .tff-footer p {{
-        margin: 4px 0;
-        font-size: 12px;
-        color: {COLORS['GRAY_600']};
-        font-weight: 600;
-    }}
-    
-    /* ─── BAŞLIKLAR ─── */
-    h1, h2, h3 {{
-        font-family: 'Bebas Neue', sans-serif;
-        letter-spacing: 1.5px;
-    }}
-    
-    /* ─── TABLO STİLLERİ ─── */
-    .stDataFrame {{
-        border-collapse: collapse;
-    }}
-    
-    /* ─── İNFO KUTUSU ─── */
-    .info-box {{
-        background: linear-gradient(135deg, {COLORS['INFO']}20 0%, {COLORS['INFO']}10 100%);
-        border-left: 4px solid {COLORS['INFO']};
-        padding: 12px 16px;
-        border-radius: 8px;
-        font-size: 13px;
-        color: {COLORS['GRAY_700']};
-        margin: 12px 0;
-    }}
-    
-    /* ─── OYUNCU KARTI ─── */
-    .player-card {{
-        background: {COLORS['WHITE']};
-        border: 1px solid {COLORS['GRAY_200']};
-        border-radius: 16px;
-        padding: 20px 10px;
-        text-align: center;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.03);
-        transition: all 0.3s ease;
-        margin-bottom: 15px;
-    }}
-    
-    .player-card:hover {{
-        transform: translateY(-6px);
-        box-shadow: 0 12px 24px rgba(227,10,23,0.15);
-        border-color: {COLORS['RED']};
-    }}
-    
-    /* ─── MOBILE OPTİMİZASYONU ─── */
-    @media (max-width: 768px) {{
-        .metric-card {{
-            padding: 12px;
-        }}
-        
-        h1 {{
-            font-size: 28px !important;
-        }}
-        
-        h2 {{
-            font-size: 20px !important;
-        }}
-        
-        [data-testid="stSidebar"] {{
-            width: 100% !important;
-        }}
-        
-        .stTabs {{
-            flex-direction: column;
-        }}
-    }}
-    
-    @media (max-width: 480px) {{
-        [data-testid="stSidebar"] {{
-            display: none;
-        }}
-        
-        .metric-card {{
-            padding: 8px;
-            margin-bottom: 8px;
-        }}
-    }}
-    </style>
-    """, unsafe_allow_html=True)
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800;900&family=DM+Mono:wght@400;500&family=Bebas+Neue&display=swap" rel="stylesheet">
 
-# ─── SAYFA BAŞLIĞI ──────────────────────────────────────────────────────────────
-def page_header(icon, title, subtitle=""):
-    """Sayfa başlığını gösterir"""
+<style>
+/* ── RESET & BASE ─────────────────────────────────────────────────────────── */
+*, *::before, *::after {{ box-sizing: border-box; margin: 0; }}
+
+html, body, [class*="css"], .stApp {{
+    font-family: 'DM Sans', system-ui, sans-serif !important;
+    color: {COLORS['GRAY_900']} !important;
+    background: {COLORS['GRAY_50']} !important;
+}}
+
+.main .block-container {{
+    padding-top: 1rem !important; 
+    padding-bottom: 4rem !important;
+    max-width: 1480px !important;
+}}
+
+/* ── EN ÜSTTEKİ KURUMSAL ŞERİT (GLOBAL HEADER) ── */
+.tff-global-header {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: white;
+    padding: 15px 35px;
+    border-bottom: 4px solid {COLORS['RED']};
+    box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+    margin: -1rem -2.5rem 2rem -2.5rem; 
+    position: relative;
+    z-index: 1000;
+}}
+
+.tgh-left {{ display: flex; align-items: center; gap: 20px; }}
+.tgh-logo {{ height: 55px; width: auto; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); transition: transform 0.3s ease; }}
+.tgh-logo:hover {{ transform: scale(1.05); }}
+.tgh-titles {{ display: flex; flex-direction: column; }}
+.tgh-main-title {{
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 28px;
+    letter-spacing: 1.5px;
+    color: {COLORS['GRAY_900']};
+    line-height: 1;
+}}
+.tgh-sub-title {{
+    font-size: 14px;
+    font-weight: 800;
+    color: {COLORS['RED']};
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-top: 4px;
+}}
+.tgh-right .tgh-flag {{
+    height: 38px;
+    width: auto;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    border: 1px solid #eee;
+}}
+
+/* ── ARKA PLAN FİLİGRANI (WATERMARK) ── */
+.watermark-container {{
+    position: fixed;
+    top: 50%;
+    left: 55%;
+    transform: translate(-50%, -50%);
+    z-index: -9999;
+    opacity: 0.03;
+    pointer-events: none;
+}}
+.watermark-container img {{
+    width: 65vw;
+    max-width: 800px;
+    filter: grayscale(100%);
+}}
+
+/* ── SIDEBAR (TÜRKÇE KARAKTER KORUMASI EKLENDİ) ── */
+[data-testid="stSidebar"] {{
+    background: {COLORS['WHITE']} !important;
+    border-right: 1px solid {COLORS['GRAY_300']} !important;
+}}
+
+section[data-testid="stSidebar"] > div {{ padding-top: 0 !important; }}
+
+[data-testid="stSidebarNav"] {{ padding: 6px !important; }}
+
+[data-testid="stSidebarNav"] a {{
+    font-family: 'DM Sans', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 14px !important;
+    color: {COLORS['GRAY_700']} !important;
+    border-radius: 8px !important;
+    margin: 2px 0 !important;
+    padding: 9px 12px !important;
+    transition: all 0.15s !important;
+    border: 1px solid transparent !important;
+    display: block !important;
+    text-transform: none !important; /* Türkçe I/İ sorunu için eklendi */
+}}
+
+[data-testid="stSidebarNav"] a:hover {{
+    background: {COLORS['RED_MID']} !important;
+    color: {COLORS['RED']} !important;
+}}
+
+[data-testid="stSidebarNav"] a[aria-current="page"] {{
+    background: {COLORS['RED']} !important;
+    color: white !important;
+    box-shadow: 0 2px 8px rgba(227,10,23,0.35) !important;
+}}
+
+/* ── BUTTONS ─────────────────────────────────────────────────────────────── */
+.stButton > button {{
+    font-family: 'DM Sans', sans-serif !important;
+    font-weight: 800 !important;
+    font-size: 13px !important;
+    letter-spacing: 0.8px !important;
+    text-transform: uppercase !important;
+    border-radius: 8px !important;
+    padding: 10px 20px !important;
+    background: {COLORS['RED']} !important;
+    color: white !important;
+    border: none !important;
+    transition: all 0.2s ease !important;
+    box-shadow: 0 4px 10px rgba(227,10,23,0.2) !important;
+}}
+
+.stButton > button:hover {{
+    background: {COLORS['RED_DARK']} !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 16px rgba(227,10,23,0.35) !important;
+}}
+
+/* ── FORM ELEMENTS ──────────────────────────────────────────────────────── */
+[data-testid="stSelectbox"] label,
+[data-testid="stRadio"] > label,
+[data-testid="stMultiSelect"] > label,
+[data-testid="stFileUploader"] > label,
+[data-testid="stSlider"] > label {{
+    font-family: 'DM Sans', sans-serif !important;
+    font-weight: 800 !important;
+    font-size: 11px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 1px !important;
+    color: {COLORS['GRAY_700']} !important;
+}}
+
+div[data-baseweb="select"] > div {{
+    border-radius: 8px !important;
+    border-color: {COLORS['GRAY_300']} !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    background: {COLORS['WHITE']} !important;
+}}
+
+div[data-baseweb="select"] > div:focus-within {{
+    border-color: {COLORS['RED']} !important;
+    box-shadow: 0 0 0 3px rgba(227,10,23,0.1) !important;
+}}
+
+/* ── METRICS (Ana Sayfa Kartları vs) ─────────────────────────────────────── */
+[data-testid="stMetric"] {{
+    background: {COLORS['WHITE']} !important;
+    border: 1px solid {COLORS['GRAY_300']} !important;
+    border-radius: 12px !important;
+    padding: 16px 20px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.03) !important;
+    transition: all 0.3s ease !important;
+}}
+
+[data-testid="stMetric"]:hover {{
+    border-color: {COLORS['RED']} !important;
+    box-shadow: 0 8px 20px rgba(227,10,23,0.08) !important;
+    transform: translateY(-3px) !important;
+}}
+
+[data-testid="stMetricLabel"] p {{
+    font-family: 'DM Sans', sans-serif !important;
+    font-size: 11px !important;
+    font-weight: 800 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 1px !important;
+    color: {COLORS['GRAY_500']} !important;
+}}
+
+[data-testid="stMetricValue"] {{
+    font-family: 'Bebas Neue', sans-serif !important;
+    font-size: 34px !important;
+    font-weight: 400 !important;
+    color: {COLORS['GRAY_900']} !important;
+    letter-spacing: 1px !important;
+}}
+
+/* ── DATAFRAME (TÜRKÇE KARAKTER KORUMASI) ───────────────────────────────── */
+[data-testid="stDataFrame"] {{
+    border-radius: 10px !important;
+    border: 1px solid {COLORS['GRAY_300']} !important;
+    overflow: hidden !important;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.02) !important;
+}}
+thead tr th {{
+    text-transform: none !important; /* Tablo başlıklarında I/İ bozulmasını engeller */
+    font-weight: 700 !important;
+    color: {COLORS['GRAY_900']} !important;
+}}
+
+/* ── TABS ─────────────────────────────────────────────────────────────────── */
+.stTabs [data-testid="stTab"] p {{
+    font-family: 'DM Sans', sans-serif !important;
+    font-weight: 800 !important;
+    font-size: 13px !important;
+    letter-spacing: 0.5px !important;
+    text-transform: uppercase !important;
+}}
+
+.stTabs [data-testid="stTab"][aria-selected="true"] {{
+    color: {COLORS['RED']} !important;
+}}
+
+.stTabs [role="tablist"] {{
+    border-bottom: 2px solid {COLORS['GRAY_300']} !important;
+    gap: 4px !important;
+}}
+
+/* ── DIVIDER ─────────────────────────────────────────────────────────────── */
+hr {{
+    border: none !important;
+    border-top: 1px solid {COLORS['GRAY_300']} !important;
+    margin: 1.5rem 0 !important;
+}}
+
+/* ── TOOLTIP (Percentile Skoru Açıklaması İçin Yeni Eklendi) ─────────────── */
+.tff-tooltip {{
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    cursor: help;
+    color: {COLORS['RED']};
+    margin-left: 6px;
+    font-size: 16px;
+}}
+.tff-tooltip .tooltip-text {{
+    visibility: hidden;
+    width: max-content;
+    max-width: 280px;
+    background-color: {COLORS['GRAY_900']};
+    color: #fff;
+    text-align: center;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 600;
+    position: absolute;
+    z-index: 9999;
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: opacity 0.3s, transform 0.3s;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    line-height: 1.4;
+}}
+.tff-tooltip:hover .tooltip-text {{
+    visibility: visible;
+    opacity: 1;
+    transform: translateX(-50%) translateY(-4px);
+}}
+
+/* ── PAGE HEADER ────────────────────────────────────────────────────────── */
+.tff-header {{
+    background: linear-gradient(135deg, {COLORS['BLACK']} 0%, {COLORS['GRAY_800']} 100%);
+    border-radius: 0 0 20px 20px;
+    padding: 28px 36px 24px;
+    margin: 0 -2.5rem 28px -2.5rem;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+}}
+
+.tff-header::before {{
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 6px;
+    background: {COLORS['RED']};
+}}
+
+.tff-header::after {{
+    content: '';
+    position: absolute;
+    right: -60px; top: -60px;
+    width: 280px; height: 280px;
+    background: radial-gradient(circle, rgba(227,10,23,0.1) 0%, transparent 65%);
+    border-radius: 50%;
+}}
+
+.tff-header .h-icon {{
+    width: 56px; height: 56px;
+    background: rgba(227,10,23,0.15);
+    border: 1.5px solid rgba(227,10,23,0.4);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px;
+    flex-shrink: 0;
+    z-index: 1;
+}}
+
+.tff-header .h-icon img {{ width: 38px; object-fit: contain; }}
+
+.tff-header .h-body {{ z-index: 1; }}
+
+.tff-header .h-title {{
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 32px;
+    letter-spacing: 3px;
+    color: white;
+    line-height: 1;
+    margin-bottom: 4px;
+}}
+
+.tff-header .h-sub {{
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    color: {COLORS['GRAY_400']};
+    letter-spacing: 0.5px;
+}}
+
+/* ── SECTION TITLE ──────────────────────────────────────────────────────── */
+.tff-section {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 30px 0 16px 0;
+}}
+
+.tff-section .s-pill {{
+    background: {COLORS['RED']};
+    border-radius: 3px;
+    width: 5px; height: 22px;
+    flex-shrink: 0;
+}}
+
+.tff-section .s-text {{
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 22px;
+    letter-spacing: 2px;
+    color: {COLORS['GRAY_900']};
+}}
+
+/* ── INFO BOX ───────────────────────────────────────────────────────────── */
+.tff-info {{
+    background: rgba(227,10,23,0.04);
+    border: 1px solid rgba(227,10,23,0.15);
+    border-left: 4px solid {COLORS['RED']};
+    border-radius: 8px;
+    padding: 12px 18px;
+    font-size: 14px;
+    font-weight: 500;
+    color: {COLORS['GRAY_800']};
+    margin: 10px 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+}}
+
+/* ── STAT CARDS ─────────────────────────────────────────────────────────── */
+.tff-stat-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+}}
+
+.tff-stat-card {{
+    background: white;
+    border: 1px solid {COLORS['GRAY_300']};
+    border-radius: 12px;
+    padding: 16px 18px;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+}}
+
+.tff-stat-card:hover {{
+    border-color: {COLORS['RED']};
+    box-shadow: 0 8px 16px rgba(227,10,23,0.08);
+    transform: translateY(-2px);
+}}
+
+.tff-stat-card .sc-val {{
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 28px;
+    letter-spacing: 1.5px;
+    color: {COLORS['RED']};
+    line-height: 1;
+}}
+
+.tff-stat-card .sc-label {{
+    font-family: 'DM Sans', sans-serif;
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: {COLORS['GRAY_600']};
+    margin-top: 8px;
+}}
+
+.tff-stat-card .sc-sub {{
+    font-size: 11px;
+    font-weight: 500;
+    color: {COLORS['GRAY_400']};
+    margin-top: 4px;
+}}
+
+/* ── PLAYER CARD ─────────────────────────────────────────────────────────── */
+.tff-player-hero {{
+    background: linear-gradient(135deg, {COLORS['GRAY_900']} 0%, {COLORS['GRAY_800']} 100%);
+    border-radius: 16px;
+    padding: 30px 36px;
+    margin-bottom: 25px;
+    border-left: 6px solid {COLORS['RED']};
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+}}
+
+.tff-player-hero::after {{
+    content: '';
+    position: absolute;
+    top: -40px; right: -40px;
+    width: 250px; height: 250px;
+    background: radial-gradient(circle, rgba(227,10,23,0.15) 0%, transparent 65%);
+    border-radius: 50%;
+}}
+
+.tff-player-hero .ph-name {{
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 44px;
+    letter-spacing: 3px;
+    color: white;
+    line-height: 1;
+    text-transform: uppercase;
+}}
+
+.tff-player-hero .ph-sub {{
+    font-size: 13px;
+    color: {COLORS['GRAY_300']};
+    margin: 8px 0 28px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+}}
+
+.tff-player-chips {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    position: relative;
+    z-index: 1;
+}}
+
+.tff-chip {{
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 12px 18px;
+    display: flex; flex-direction: column; align-items: center;
+    min-width: 80px;
+    transition: all 0.2s ease;
+}}
+
+.tff-chip:hover {{
+    background: rgba(227,10,23,0.15);
+    border-color: rgba(227,10,23,0.5);
+    transform: translateY(-2px);
+}}
+
+.tff-chip .c-val {{
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 24px;
+    letter-spacing: 1px;
+    color: {COLORS['RED']};
+    line-height: 1;
+}}
+
+.tff-chip .c-lbl {{
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: {COLORS['GRAY_300']};
+    margin-top: 6px;
+    text-align: center;
+}}
+
+/* ── SIDEBAR BRAND ───────────────────────────────────────────────────────── */
+.sb-brand {{
+    padding: 20px 10px;
+    border-bottom: 2px solid {COLORS['RED']};
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 10px;
+}}
+
+.sb-brand img {{
+    width: 85px;
+    filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.1));
+    margin-bottom: 5px;
+    transition: transform 0.3s;
+}}
+.sb-brand img:hover {{
+    transform: scale(1.05);
+}}
+
+.sb-brand .sb-title {{
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 24px;
+    letter-spacing: 1.5px;
+    color: {COLORS['GRAY_900']};
+    line-height: 1.1;
+}}
+
+.sb-brand .sb-sub {{
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    color: {COLORS['RED']};
+    letter-spacing: 1.5px;
+    margin-top: 4px;
+}}
+
+/* ── RANK BADGES ─────────────────────────────────────────────────────────── */
+.rk-1,.rk-2,.rk-3,.rk-n {{
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 50%;
+    font-family: 'DM Mono', monospace; font-weight: 700; font-size: 12px;
+}}
+.rk-1 {{ background: #FFD700; color: #5C4300; box-shadow: 0 2px 5px rgba(255,215,0,0.3); }}
+.rk-2 {{ background: #C0C0C0; color: #333; box-shadow: 0 2px 5px rgba(192,192,192,0.3); }}
+.rk-3 {{ background: #CD7F32; color: white; box-shadow: 0 2px 5px rgba(205,127,50,0.3); }}
+.rk-n {{ background: {COLORS['GRAY_100']}; color: {COLORS['GRAY_700']}; }}
+
+/* ── BADGES ──────────────────────────────────────────────────────────────── */
+.badge-match {{
+    display: inline-block;
+    background: {COLORS['BLACK']};
+    color: white;
+    font-size: 10px; font-weight: 800; letter-spacing: 1px;
+    text-transform: uppercase; padding: 4px 10px; border-radius: 4px;
+}}
+
+.badge-training {{
+    display: inline-block;
+    background: {COLORS['RED']};
+    color: white;
+    font-size: 10px; font-weight: 800; letter-spacing: 1px;
+    text-transform: uppercase; padding: 4px 10px; border-radius: 4px;
+}}
+
+/* ── PERF LABELS ─────────────────────────────────────────────────────────── */
+.perf-elite {{ display:inline-block;background:#ECFDF5;color:#059669;border:1px solid #A7F3D0;border-radius:20px;padding:3px 12px;font-size:11px;font-weight:800; }}
+.perf-good  {{ display:inline-block;background:#EFF6FF;color:#2563EB;border:1px solid #BFDBFE;border-radius:20px;padding:3px 12px;font-size:11px;font-weight:800; }}
+.perf-avg   {{ display:inline-block;background:{COLORS['GRAY_100']};color:{COLORS['GRAY_700']};border:1px solid {COLORS['GRAY_300']};border-radius:20px;padding:3px 12px;font-size:11px;font-weight:800; }}
+.perf-low   {{ display:inline-block;background:#FEF2F2;color:#DC2626;border:1px solid #FECACA;border-radius:20px;padding:3px 12px;font-size:11px;font-weight:800; }}
+
+/* ── FOOTER ──────────────────────────────────────────────────────────────── */
+.tff-footer {{
+    text-align: center;
+    padding: 24px 0 8px;
+    margin-top: 48px;
+    border-top: 1px solid {COLORS['GRAY_300']};
+}}
+
+.tff-footer p {{
+    font-size: 12px;
+    font-weight: 500;
+    color: {COLORS['GRAY_400']};
+    margin: 2px 0;
+    letter-spacing: 0.5px;
+}}
+
+/* ── DOWNLOAD BUTTON ─────────────────────────────────────────────────────── */
+.stDownloadButton > button {{
+    font-family: 'DM Sans', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 12px !important;
+    letter-spacing: 0.8px !important;
+    border-radius: 8px !important;
+    padding: 8px 16px !important;
+    background: white !important;
+    color: {COLORS['GRAY_800']} !important;
+    border: 1.5px solid {COLORS['GRAY_300']} !important;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.02) !important;
+    text-transform: uppercase !important;
+    transition: all 0.2s ease !important;
+}}
+
+.stDownloadButton > button:hover {{
+    border-color: {COLORS['RED']} !important;
+    color: {COLORS['RED']} !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 10px rgba(227,10,23,0.08) !important;
+}}
+
+/* ── HIDE STREAMLIT DEFAULTS ─────────────────────────────────────────────── */
+#MainMenu, footer, header {{ visibility: hidden; }}
+[data-testid="stDecoration"] {{ display: none; }}
+
+</style>
+""", unsafe_allow_html=True)
+    
+    # 2. HTML ELEMENTLERİ (Header ve Watermark)
     st.markdown(f"""
-    <div style="background: linear-gradient(135deg, {COLORS['WHITE']} 0%, {COLORS['GRAY_50']} 100%);
-                border-bottom: 3px solid {COLORS['RED']};
-                padding: 30px 0;
-                margin-bottom: 25px;
-                border-radius: 0 0 16px 16px;">
-        <div style="display: flex; align-items: center; gap: 15px;">
-            <div style="font-size: 44px;">{icon}</div>
-            <div>
-                <div style="font-family: 'Bebas Neue', sans-serif; font-size: 36px;
-                           letter-spacing: 2px; color: {COLORS['GRAY_900']};
-                           font-weight: 700;">
-                    {title.upper()}
-                </div>
-                {f'<div style="font-size: 13px; color: {COLORS["GRAY_600"]}; margin-top: 4px; font-weight: 600;">{subtitle}</div>' if subtitle else ''}
-            </div>
+<div class="tff-global-header">
+<div class="tgh-left">
+<img src="{logo_header if logo_header else logo_main}" class="tgh-logo">
+<div class="tgh-titles">
+<div class="tgh-main-title">TÜRKİYE FUTBOL FEDERASYONU</div>
+<div class="tgh-sub-title">GENÇ MİLLİ TAKIMLAR ATLETİK PERFORMANS VERİ MERKEZİ</div>
+</div>
+</div>
+<div class="tgh-right">
+<img src="{flag_tr if flag_tr else ""}" class="tgh-flag" alt="TR">
+</div>
+</div>
+<div class="watermark-container"><img src="{logo_main}"></div>
+""", unsafe_allow_html=True)
+
+
+# ── BİLEŞEN FONKSİYONLARI ─────────────────────────────────────────────────────
+
+def page_header(icon: str, title: str, subtitle: str = ""):
+    import streamlit as st
+    logo = get_logo_src()
+    st.markdown(f"""
+    <div class="tff-header">
+        <div class="h-icon"><img src="{logo}"></div>
+        <div class="h-body">
+            <div class="h-title" style="color:white;">{title.upper()}</div>
+            <div class="h-sub" style="color:#D1D5DB;">{subtitle}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-# ─── KİSİM BAŞLIĞI ──────────────────────────────────────────────────────────────
-def section_title(title, icon="", tooltip=""):
-    """Kısım başlığını gösterir"""
-    tooltip_html = f'title="{tooltip}"' if tooltip else ''
-    st.markdown(f"""
-    <div style="margin-top: 25px; margin-bottom: 15px;" {tooltip_html}>
-        <div style="display: flex; align-items: center; gap: 10px; border-left: 4px solid {COLORS['RED']};
-                   padding-left: 12px;">
-            <div style="font-size: 20px;">{icon}</div>
-            <div style="font-family: 'Bebas Neue', sans-serif; font-size: 20px;
-                       letter-spacing: 1.5px; color: {COLORS['GRAY_900']};
-                       font-weight: 700;">
-                {title.upper()}
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# ─── BİLGİ KUTUSU ───────────────────────────────────────────────────────────────
-def info_box(content):
-    """Bilgi kutusunu gösterir"""
-    st.markdown(f"""
-    <div class="info-box" style="background: linear-gradient(135deg, {COLORS['INFO']}15 0%, {COLORS['INFO']}5 100%);
-                                  border-left: 4px solid {COLORS['INFO']};
-                                  padding: 14px 16px;
-                                  border-radius: 8px;
-                                  margin: 15px 0;">
-        {content}
-    </div>
-    """, unsafe_allow_html=True)
-
-# ─── SIDEBAR MARKALAMA ───────────────────────────────────────────────────────────
-def sidebar_brand():
-    """Sidebar üst logosunu gösterir"""
-    st.markdown(f"""
-    <div style="text-align: center; padding: 20px 0; border-bottom: 2px solid {COLORS['RED']};
-               margin-bottom: 20px;">
-        <div style="font-size: 48px; margin-bottom: 10px;">🇹🇷</div>
-        <div style="font-family: 'Bebas Neue', sans-serif; font-size: 18px;
-                   letter-spacing: 2px; color: {COLORS['WHITE']};
-                   font-weight: 700;">
-            TFF PERFORMANs
-        </div>
-        <div style="font-size: 11px; color: {COLORS['GRAY_400']}; margin-top: 6px;
-                   letter-spacing: 1px; font-weight: 600;">
-            ATLETİK VERİ PLATFORMU
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# ─── KARŞILAŞTIRMA KARTI ────────────────────────────────────────────────────────
-def comparison_card(metric_name, value1, value2, unit="", player1_name="Oyuncu 1", player2_name="Oyuncu 2"):
-    """Renk-kodlu karşılaştırma kartını gösterir"""
-    diff = value1 - value2
-    percent_diff = (diff / value2 * 100) if value2 != 0 else 0
-    
-    if diff > 0:
-        color = COLORS['SUCCESS']
-        arrow = "▲"
-    elif diff < 0:
-        color = COLORS['DANGER']
-        arrow = "▼"
-    else:
-        color = COLORS['GRAY_400']
-        arrow = "▬"
-    
-    return f"""
-    <div style="background: white; border: 1px solid {COLORS['GRAY_200']};
-                border-radius: 12px; padding: 16px; margin: 10px 0;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
-        <div style="font-size: 11px; color: {COLORS['GRAY_600']};
-                   font-weight: 800; text-transform: uppercase; margin-bottom: 12px;">
-            {metric_name}
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-            <div style="background: {COLORS['GRAY_50']}; padding: 12px; border-radius: 8px;
-                       border-left: 3px solid {COLORS['RED']};">
-                <div style="font-size: 10px; color: {COLORS['GRAY_600']};
-                           font-weight: 700; margin-bottom: 4px;">
-                    {player1_name.upper()}
-                </div>
-                <div style="font-family: 'Bebas Neue'; font-size: 24px;
-                           color: {COLORS['RED']}; font-weight: 700;">
-                    {value1:.1f}
-                </div>
-                <div style="font-size: 10px; color: {COLORS['GRAY_500']};">{unit}</div>
-            </div>
-            <div style="background: {COLORS['GRAY_50']}; padding: 12px; border-radius: 8px;
-                       border-left: 3px solid {COLORS['GRAY_400']};">
-                <div style="font-size: 10px; color: {COLORS['GRAY_600']};
-                           font-weight: 700; margin-bottom: 4px;">
-                    {player2_name.upper()}
-                </div>
-                <div style="font-family: 'Bebas Neue'; font-size: 24px;
-                           color: {COLORS['GRAY_700']}; font-weight: 700;">
-                    {value2:.1f}
-                </div>
-                <div style="font-size: 10px; color: {COLORS['GRAY_500']};">{unit}</div>
-            </div>
-        </div>
-        <div style="text-align: center; margin-top: 12px; padding-top: 12px;
-                   border-top: 1px solid {COLORS['GRAY_200']};">
-            <span style="font-family: 'Bebas Neue'; font-size: 18px;
-                        color: {color}; font-weight: 700; margin-right: 4px;">
-                {arrow}
-            </span>
-            <span style="color: {color}; font-weight: 700;">
-                {abs(diff):.1f} ({percent_diff:+.1f}%)
-            </span>
-        </div>
-    </div>
+def section_title(text: str, icon: str = "", tooltip: str = ""):
     """
+    Başlık yazdırır. Tooltip gönderilirse başlığın yanına bir bilgi ikonu (?) ekler.
+    """
+    import streamlit as st
+    label = f"{icon}&thinsp;&thinsp;{text}" if icon else text
+    
+    # Tooltip varsa HTML'e entegre et
+    tooltip_html = f"""
+    <div class="tff-tooltip">
+        <span style="font-size:18px;">ℹ️</span>
+        <span class="tooltip-text">{tooltip}</span>
+    </div>
+    """ if tooltip else ""
+    
+    st.markdown(f'''
+    <div class="tff-section">
+        <div class="s-pill"></div>
+        <span class="s-text">{label}</span>
+        {tooltip_html}
+    </div>
+    ''', unsafe_allow_html=True)
 
-print("✅ Stil sistemi yüklendi | Tema: Profesyonel TFF")
+def info_box(html_text: str):
+    import streamlit as st
+    st.markdown(f'''
+    <div class="tff-info">
+        <span style="font-size:20px; color:{COLORS['RED']};">💡</span> 
+        <div>{html_text}</div>
+    </div>''', unsafe_allow_html=True)
+
+def sidebar_brand():
+    import streamlit as st
+    logo = get_logo_src()
+    st.markdown(f"""
+    <div class="sb-brand">
+        <img src="{logo}" alt="TFF Logo">
+        <div>
+            <div class="sb-title">TFF PERFORMANS</div>
+            <div class="sb-sub">GENÇ MİLLİ TAKIMLAR</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def player_profile_card(name: str, age_group: str, stats: dict):
+    import streamlit as st
+
+    def chip(val, lbl):
+        return f'<div class="tff-chip"><span class="c-val">{val}</span><span class="c-lbl">{lbl}</span></div>'
+
+    chips = (
+        chip(int(stats.get('camp_count', 0)),             'KAMP')
+      + chip(int(stats.get('session_count', 0)),          'SEANS')
+      + chip(int(stats.get('match_count', 0)),            'MAÇ')
+      + chip(f"{stats.get('avg_training_minutes', 0):.0f}'", 'ANT. DK')
+      + chip(f"{stats.get('avg_match_minutes', 0):.0f}'",    'MAÇ DK')
+      + chip(f"{stats.get('distance_per_90', 0):.0f}m",      "MES/90'")
+      + chip(f"{stats.get('max_speed', 0):.1f}",              'MAX KM/H')
+    )
+
+    st.markdown(f"""
+    <div class="tff-player-hero">
+        <div class="ph-name">{name}</div>
+        <div class="ph-sub">{age_group} · TFF Genç Milli Takımlar · Atletik Performans</div>
+        <div class="tff-player-chips">{chips}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def tip_badge(tip: str) -> str:
+    if "MATCH" in str(tip).upper():
+        return '<span class="badge-match">MAÇ</span>'
+    return '<span class="badge-training">ANTRENMAN</span>'
+
+def rank_badge_html(rank: int) -> str:
+    if rank == 1: return '<span class="rk-1">1</span>'
+    if rank == 2: return '<span class="rk-2">2</span>'
+    if rank == 3: return '<span class="rk-3">3</span>'
+    return f'<span class="rk-n">{rank}</span>'
+
+def perf_label(value: float, team_avg: float) -> str:
+    if not team_avg: return '<span class="perf-avg">—</span>'
+    r = value / team_avg
+    if r >= 1.15: return '<span class="perf-elite">▲ ELİT</span>'
+    if r >= 1.05: return '<span class="perf-good">▲ İYİ</span>'
+    if r >= 0.95: return '<span class="perf-avg">→ ORTA</span>'
+    return '<span class="perf-low">▼ DÜŞÜK</span>'

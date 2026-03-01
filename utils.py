@@ -1,685 +1,699 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# TFF PERFORMANS SİSTEMİ - YARDIMCI FONKSİYONLAR
-# ═══════════════════════════════════════════════════════════════════════════════
-
-import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
-from datetime import datetime
-from config import COLORS, METRICS, PRIMARY_METRICS
-from export_tools import export_manager
+import re
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# GRAFIK FONKSİYONLARI
-# ═══════════════════════════════════════════════════════════════════════════════
+from config import (METRICS, METRICS_BASE, METRICS_ACC_DEC,
+                    METRICS_N, RADAR_METRICS, PRIMARY_METRICS, DEFAULT_MINUTES)
+from styles import COLORS, PLAYER_PALETTE
 
-def plot_player_performance_with_band(player_data, team_data, metric):
-    """Oyuncu performansı ve takım bandı grafiği"""
-    data = player_data.sort_values('tarih').copy()
-    team_band = team_data.groupby('tarih')[metric].agg(['mean', 'std']).reset_index()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RENK YARDIMCILARI
+# ─────────────────────────────────────────────────────────────────────────────
+
+def hex_to_rgba(hex_color: str, alpha: float = 0.15) -> str:
+    h = hex_color.lstrip('#')
+    r, g, b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def day_color(tip, alpha=1.0):
+    if 'MATCH' in str(tip).upper():
+        return f"rgba(13,13,13,{alpha})"
+    return f"rgba(227,10,23,{alpha})"
+
+
+def percentile_color(pct: float) -> str:
+    """0-100 percentile → red to green gradient."""
+    r = int(227 * (1 - pct/100) + 5  * (pct/100))
+    g = int(10  * (1 - pct/100) + 150 * (pct/100))
+    b = int(23  * (1 - pct/100) + 96  * (pct/100))
+    return f"rgb({r},{g},{b})"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PERCENTİLE RANK (SKORLAMA) HESAPLAMASI
+# ─────────────────────────────────────────────────────────────────────────────
+
+def calculate_percentile_rank(player_values: pd.Series, population_values: pd.Series) -> float:
+    if population_values.dropna().empty or player_values.dropna().empty:
+        return 50.0
+    player_mean = float(player_values.dropna().mean())
+    pop = population_values.dropna().values
+    n = len(pop)
+    n_less = np.sum(pop < player_mean)
+    n_equal = np.sum(pop == player_mean)
+    pct = (n_less + 0.5 * n_equal) / n * 100
+    return round(float(pct), 1)
+
+
+def calculate_composite_score(player_data: pd.DataFrame,
+                               population_data: pd.DataFrame,
+                               session_filter: str = "ALL") -> dict:
+    def _filter(df):
+        if session_filter == "TRAINING":
+            return df[df['tip'].str.upper() == 'TRAINING']
+        if session_filter == "MATCH":
+            return df[df['tip'].str.upper() == 'MATCH']
+        return df
+
+    p = _filter(player_data)
+    pop = _filter(population_data)
+
+    result = {}
+    valid_metrics = []
     
-    fig = go.Figure()
+    for m in PRIMARY_METRICS:
+        if m not in p.columns or p[m].dropna().empty:
+            continue
+        if m not in pop.columns or pop[m].dropna().empty:
+            continue
+        pct = calculate_percentile_rank(p[m], pop[m])
+        result[m] = pct
+        valid_metrics.append(pct)
+
+    result['composite'] = round(np.mean(valid_metrics), 1) if valid_metrics else 0.0
+    return result
+
+
+def calculate_player_stats(player_data: pd.DataFrame) -> dict:
+    if player_data.empty:
+        return {}
     
-    # Takım band'i (min-max)
-    fig.add_trace(go.Scatter(
-        x=team_band['tarih'],
-        y=team_band['mean'] + team_band['std'],
-        fill=None,
-        mode='lines',
-        line_color='rgba(0,0,0,0)',
-        showlegend=False,
-        hoverinfo='skip'
-    ))
+    train = player_data[player_data['tip'].str.contains('TRAINING', na=False, case=False)]
+    match = player_data[player_data['tip'].str.contains('MATCH',    na=False, case=False)]
     
-    fig.add_trace(go.Scatter(
-        x=team_band['tarih'],
-        y=team_band['mean'] - team_band['std'],
-        fill='tonexty',
-        mode='lines',
-        line_color='rgba(0,0,0,0)',
-        fillcolor='rgba(227,10,23,0.1)',
-        name='Takım Aralığı (±Std)',
-        hoverinfo='skip'
-    ))
+    total_min = player_data['minutes'].sum()
+    return {
+        'camp_count':            player_data['camp_id'].nunique(),
+        'session_count':         player_data['tarih'].nunique(), 
+        'match_count':           match['tarih'].nunique() if not match.empty else 0, 
+        'training_count':        train['tarih'].nunique() if not train.empty else 0,
+        'avg_distance_training': train['total_distance'].mean() if not train.empty else 0,
+        'avg_distance_match':    match['total_distance'].mean()  if not match.empty else 0,
+        'avg_training_minutes':  train['minutes'].mean()         if not train.empty else 0,
+        'avg_match_minutes':     match['minutes'].mean()         if not match.empty else 0,
+        'distance_per_90':       (player_data['total_distance'].sum() / total_min * 90) if total_min > 0 else 0,
+        'max_speed':             player_data['smax_kmh'].max()   if 'smax_kmh' in player_data else 0,
+        'avg_player_load':       player_data['player_load'].mean() if 'player_load' in player_data else 0,
+    }
+
+get_player_stats = calculate_player_stats
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MİN / MAX / ORT ÖZET TABLOSU VE SIRALAMA (YENİ EKLENEN FAZ 1 ÖZELLİKLERİ)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def calculate_rank_and_percentile(df, metric, player_val, ascending=False):
+    """
+    Gönderilen dataframe içindeki oyuncunun kaçıncı sırada olduğunu 
+    ve yüzdelik dilimini hesaplar.
+    """
+    if df.empty or metric not in df.columns or pd.isna(player_val) or player_val == 0:
+        return {"rank_str": "—", "percentile": 0, "rank_int": 0, "total": 0}
+        
+    valid_data = df[df[metric] > 0][metric].copy()
+    total_players = len(valid_data)
     
-    # Takım ortalaması
-    fig.add_trace(go.Scatter(
-        x=team_band['tarih'],
-        y=team_band['mean'],
-        mode='lines',
-        name='Takım Ortalaması',
-        line=dict(color='#E30A17', width=2, dash='dash')
-    ))
+    if total_players == 0:
+         return {"rank_str": "—", "percentile": 0, "rank_int": 0, "total": 0}
+
+    valid_data_sorted = valid_data.sort_values(ascending=ascending).reset_index(drop=True)
+    rank_int = int(valid_data.rank(ascending=ascending, method='min').loc[df[metric] == player_val].iloc[0])
     
-    # Oyuncu verisi
-    fig.add_trace(go.Scatter(
-        x=data['tarih'],
-        y=data[metric],
-        mode='lines+markers',
-        name='Oyuncu',
-        line=dict(color='#0D0D0D', width=3),
-        marker=dict(size=8, color='white', line=dict(color='#0D0D0D', width=2))
-    ))
+    if not ascending:
+        percentile = (valid_data < player_val).sum() / total_players * 100
+    else:
+        percentile = (valid_data > player_val).sum() / total_players * 100
+        
+    percentile = min(max(percentile, 1), 99) 
+
+    return {
+        "rank_str": f"{rank_int}/{total_players}",
+        "percentile": round(percentile, 1),
+        "rank_int": rank_int,
+        "total": total_players
+    }
+
+def format_metric_value(val, metric):
+    """Config'deki formata göre değeri formatlar."""
+    if pd.isna(val): return "—"
+    fmt = METRICS.get(metric, {}).get('format', '{:.1f}')
+    try:
+        return fmt.format(val)
+    except:
+        return str(val)
+
+def build_stats_table(player_data: pd.DataFrame, team_data: pd.DataFrame) -> pd.DataFrame:
+    all_m = [m for m in PRIMARY_METRICS if m in player_data.columns and player_data[m].dropna().any()]
+
+    rows = []
+    for m in all_m:
+        p_valid_min = player_data[m].replace(0, np.nan).dropna()
+        t_valid_min = team_data[m].replace(0, np.nan).dropna() if not team_data.empty else pd.Series(dtype=float)
+
+        p   = player_data[m].dropna()
+        t   = team_data[m].dropna()  if not team_data.empty else pd.Series(dtype=float)
+        mi  = METRICS.get(m, {})
+
+        pct = calculate_percentile_rank(p, t) if not t.empty else None
+
+        rows.append({
+            'METRİK':         mi.get('display', m).upper(),
+            'BİRİM':          mi.get('unit', ''),
+            'OYUNCU MİN':     f"{p_valid_min.min():.1f}"  if not p_valid_min.empty else '—',
+            'OYUNCU ORT.':    f"{p.mean():.1f}" if not p.empty else '—',
+            'OYUNCU MAX':     f"{p.max():.1f}"  if not p.empty else '—',
+            'TAKIM MİN':      f"{t_valid_min.min():.1f}"  if not t_valid_min.empty else '—',
+            'TAKIM ORT.':     f"{t.mean():.1f}" if not t.empty else '—',
+            'TAKIM MAX':      f"{t.max():.1f}"  if not t.empty else '—',
+            'SKOR':           f"%{pct:.0f}"      if pct is not None else '—',
+        })
+    return pd.DataFrame(rows)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IMPACT SCORE & OBJEKTİF KARAR MOTORU 
+# ─────────────────────────────────────────────────────────────────────────────
+
+def calculate_impact_score_engine(df):
+    if df.empty: return df
     
-    metric_label = METRICS.get(metric, {}).get('display', metric)
-    metric_unit = METRICS.get(metric, {}).get('unit', '')
+    d = df.copy()
+    d = d[d['minutes'] > 0].copy()
     
-    fig.update_layout(
-        title=f"{metric_label} ({metric_unit})",
+    pm_metrics = ['total_distance', 'metrage', 'dist_20_25', 'dist_25_plus', 
+                  'dist_acc_3', 'dist_dec_3', 'player_load', 'amp']
+                  
+    for m in pm_metrics:
+        if m in d.columns:
+            d[f'{m}_pm'] = d[m] / d['minutes']
+            
+    d['explosive_pm'] = 0
+    if 'dist_acc_3_pm' in d.columns and 'dist_dec_3_pm' in d.columns:
+        d['explosive_pm'] = (d['dist_acc_3_pm'] + d['dist_dec_3_pm'].abs()) / 2
+        
+    d['metabolic_pm'] = 0
+    if 'amp_pm' in d.columns and 'metrage_pm' in d.columns:
+        d['metabolic_pm'] = (d['amp_pm'] + d['metrage_pm']) / 2
+    elif 'amp_pm' in d.columns:
+        d['metabolic_pm'] = d['amp_pm']
+
+    def apply_z(group):
+        cols_to_z = [f'{m}_pm' for m in pm_metrics] + ['explosive_pm', 'metabolic_pm', 'smax_kmh']
+        for col in cols_to_z:
+            if col in group.columns and group[col].std() > 0:
+                group[f'{col}_z'] = (group[col] - group[col].mean()) / group[col].std()
+            else:
+                group[f'{col}_z'] = 0
+        return group
+
+    d = d.groupby(['tarih', 'tip'], group_keys=False).apply(apply_z)
+    
+    w = {
+        'dist_25_plus_pm_z': 0.25,
+        'explosive_pm_z':    0.20,
+        'player_load_pm_z':  0.20,
+        'total_distance_pm_z': 0.15,
+        'smax_kmh_z':        0.10,
+        'metabolic_pm_z':    0.10
+    }
+    
+    d['impact_raw'] = 0
+    for col, weight in w.items():
+        if col in d.columns:
+            d['impact_raw'] += d[col] * weight
+            
+    d['impact_score'] = ((d['impact_raw'] + 2.5) / 5 * 100).clip(0, 100).round(1)
+    
+    def get_objective_status(score):
+        if score >= 80: return "Elit (+1.5 SD)"
+        if score >= 60: return "Ort. Üstü (+0.5 SD)"
+        if score >= 40: return "Ortalama Standardı"
+        if score >= 20: return "Ort. Altı (-0.5 SD)"
+        return "Düşük (-1.5 SD)"
+
+    d['status_tag'] = d['impact_score'].apply(get_objective_status)
+    return d
+
+def calculate_development_stats(current_df, history_df):
+    metrics = ['impact_score', 'dist_25_plus_pm', 'explosive_pm', 'player_load_pm', 'total_distance_pm']
+    avail_metrics = [m for m in metrics if m in current_df.columns and m in history_df.columns]
+    curr_avg = current_df.groupby('player_name')[avail_metrics].mean()
+    hist_avg = history_df.groupby('player_name')[avail_metrics].mean()
+    dev_df = ((curr_avg - hist_avg) / hist_avg * 100).round(1)
+    return dev_df
+
+def style_development_table(df):
+    def color_val(val):
+        if pd.isna(val): return ''
+        if val >= 10:  return 'background-color: #065f46; color: white'
+        if val >= 5:   return 'background-color: #10b981; color: white'
+        if val <= -10: return 'background-color: #991b1b; color: white'
+        if val <= -5:  return 'background-color: #f97316; color: white'
+        return 'background-color: #fef08a; color: black'
+    return df.style.map(color_val)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LAYOUT HELPER
+# ─────────────────────────────────────────────────────────────────────────────
+
+_FONT = 'DM Sans, system-ui, sans-serif'
+_FONT_TITLE = 'Bebas Neue, sans-serif'
+
+def _base_layout(title='', height=480, **kw):
+    d = dict(
+        title=dict(text=f"<b>{title}</b>" if title else '',
+                   font=dict(family=_FONT_TITLE, size=24, color=COLORS['GRAY_900'])),
         template='plotly_white',
-        hovermode='x unified',
-        height=400,
-        margin=dict(l=20, r=20, t=40, b=20),
-        xaxis=dict(
-            title='Tarih',
-            gridcolor='#F3F4F6',
-            tickformat='%d.%m'
-        ),
-        yaxis=dict(
-            title=f'{metric_label} ({metric_unit})',
-            gridcolor='#F3F4F6'
-        )
+        height=height,
+        font=dict(family=_FONT, size=12, color=COLORS['GRAY_700']),
+        plot_bgcolor='#FAFAFA',
+        paper_bgcolor=COLORS['WHITE'],
+        margin=dict(l=60, r=40, t=60, b=60),
     )
-    
+    d.update(kw)
+    return d
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PERFORMANS GRAFİKLERİ
+# ─────────────────────────────────────────────────────────────────────────────
+
+def plot_player_performance_with_band(df_player, df_team, metric, age_group=''):
+    if df_player.empty or metric not in df_player.columns:
+        return go.Figure()
+
+    dp = df_player.sort_values('tarih').copy()
+    dp['tarih_str'] = dp['tarih'].dt.strftime('%d.%m')
+
+    dt = (df_team.groupby('tarih')[metric]
+          .agg(mean='mean', mn='min', mx='max')
+          .reset_index().sort_values('tarih'))
+    dt['tarih_str'] = dt['tarih'].dt.strftime('%d.%m')
+
+    m_info  = METRICS.get(metric, {'display': metric, 'unit': ''})
+    title   = f"{m_info['display']} ({m_info['unit']})" if m_info['unit'] else m_info['display']
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=dt['tarih_str'], y=dt['mx'],
+        mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip',
+    ))
+    fig.add_trace(go.Scatter(
+        x=dt['tarih_str'], y=dt['mn'],
+        mode='lines', line=dict(width=0),
+        fill='tonexty', fillcolor=COLORS['BAND_FILL'],
+        name='Takım Aralığı', hoverinfo='skip',
+    ))
+    fig.add_trace(go.Scatter(
+        x=dt['tarih_str'], y=dt['mean'],
+        mode='lines+markers', name='Takım Ort.',
+        line=dict(color=COLORS['GRAY_500'], width=2, dash='dot'),
+        marker=dict(size=6, color=COLORS['GRAY_500']),
+    ))
+    vals = dp[metric].fillna(0)
+    bar_c = [day_color(t, 0.88) for t in dp['tip']]
+
+    fig.add_trace(go.Bar(
+        x=dp['tarih_str'], y=vals, name='Oyuncu',
+        marker=dict(color=bar_c, line=dict(color='rgba(0,0,0,0.06)', width=1)),
+        text=[f"{v:.1f}" for v in vals],
+        textposition='outside',
+        textfont=dict(size=11, family=_FONT, color=COLORS['GRAY_900']),
+    ))
+
+    layout = _base_layout(title.upper())
+    layout.update(
+        barmode='overlay',
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1,
+                    font=dict(size=11, weight='bold')),
+        xaxis=dict(title='Tarih', tickangle=-30, gridcolor='#F3F4F6',
+                   tickfont=dict(family=_FONT, size=11, weight='bold')),
+        yaxis=dict(title=m_info['unit'], gridcolor='#F3F4F6',
+                   tickfont=dict(family=_FONT, size=11)),
+    )
+    fig.update_layout(**layout)
     return fig
 
-def plot_player_radar(player_data, team_data):
-    """Oyuncu radar grafiği (percentile)"""
-    percentiles = {}
+
+def plot_min_max_avg(df_player, df_team, metric):
+    if df_player.empty or metric not in df_player.columns:
+        return go.Figure()
+
+    p_val = df_player[metric].dropna().mean()
+    t_valid = df_team[metric].replace(0, np.nan).dropna()
     
-    for metric in PRIMARY_METRICS:
-        if metric in player_data.columns and metric in team_data.columns:
-            player_val = player_data[metric].mean()
-            team_vals = team_data[metric].dropna()
-            
-            if len(team_vals) > 0 and not pd.isna(player_val):
-                percentile = (team_vals < player_val).sum() / len(team_vals) * 100
-                percentiles[metric] = percentile
-    
-    if not percentiles:
-        st.warning("Radar grafiği için yeterli veri yok")
-        return None
-    
-    fig = go.Figure(data=go.Scatterpolar(
-        r=list(percentiles.values()),
-        theta=[METRICS.get(m, {}).get('display', m) for m in percentiles.keys()],
-        fill='toself',
-        marker=dict(size=8, color='#E30A17'),
-        line=dict(color='#E30A17', width=2),
-        fillcolor='rgba(227,10,23,0.3)'
+    t_min = t_valid.min()  if not t_valid.empty else 0
+    t_avg = df_team[metric].dropna().mean()  if not df_team.empty else 0
+    t_max = df_team[metric].dropna().max()   if not df_team.empty else 1
+
+    m_info = METRICS.get(metric, {'display': metric, 'unit': ''})
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=[t_max], y=[''], orientation='h',
+        marker=dict(color=COLORS['BAND_FILL'], line_width=0),
+        name='Takım Max', showlegend=False,
     ))
-    
+    fig.add_trace(go.Bar(
+        x=[t_avg], y=[''], orientation='h',
+        marker=dict(color='rgba(107,114,128,0.3)', line_width=0),
+        name='Takım Ort.', showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(
+        x=[p_val], y=[''],
+        mode='markers',
+        marker=dict(color=COLORS['RED'], size=22, symbol='diamond',
+                    line=dict(color='white', width=2)),
+        name='Oyuncu',
+    ))
+    fig.update_layout(
+        barmode='overlay',
+        height=110, margin=dict(l=10, r=10, t=35, b=10),
+        title=dict(text=m_info['display'].upper(), font=dict(family=_FONT_TITLE, size=16)),
+        xaxis=dict(title=m_info['unit'], gridcolor='#F3F4F6', tickfont=dict(weight='bold')),
+        yaxis=dict(visible=False),
+        plot_bgcolor='#FAFAFA', paper_bgcolor=COLORS['WHITE'],
+        showlegend=False,
+        font=dict(family=_FONT, size=11),
+    )
+    return fig
+
+
+def plot_percentile_gauge(pct: float, label: str) -> go.Figure:
+    color = percentile_color(pct)
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=pct,
+        title=dict(text=label.upper(), font=dict(family=_FONT, size=13, color=COLORS['GRAY_800'], weight='bold')),
+        number=dict(suffix="%", font=dict(family=_FONT_TITLE, size=28, color=color)),
+        gauge=dict(
+            axis=dict(range=[0, 100], tickfont=dict(size=10, weight='bold')),
+            bar=dict(color=color),
+            bgcolor=COLORS['GRAY_100'],
+            borderwidth=0,
+            steps=[
+                dict(range=[0,  25], color='rgba(220,38,38,0.12)'),
+                dict(range=[25, 50], color='rgba(217,119,6,0.10)'),
+                dict(range=[50, 75], color='rgba(37,99,235,0.10)'),
+                dict(range=[75,100], color='rgba(5,150,105,0.10)'),
+            ],
+            threshold=dict(line=dict(color=COLORS['GRAY_500'], width=3), thickness=0.85, value=50),
+        ),
+    ))
+    fig.update_layout(height=180, margin=dict(l=15, r=15, t=35, b=15), paper_bgcolor=COLORS['WHITE'])
+    return fig
+
+
+def plot_player_radar(player_data, team_data, radar_metrics=None):
+    if radar_metrics is None: radar_metrics = RADAR_METRICS
+    metrics = [m for m in radar_metrics if m in player_data.columns and player_data[m].notna().any()]
+    if not metrics: return go.Figure()
+
+    p_vals, t_avgs, labels = [], [], []
+    for m in metrics:
+        mx = team_data[m].max() if not team_data.empty and team_data[m].max() > 0 else 1
+        p_vals.append(min((player_data[m].mean() / mx) * 100, 110))
+        t_avgs.append(min((team_data[m].mean()  / mx) * 100, 110))
+        labels.append(METRICS.get(m, {}).get('display', m).upper())
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=p_vals, theta=labels, fill='toself', name='Oyuncu',
+        line=dict(color=COLORS['RED'], width=3), fillcolor=hex_to_rgba(COLORS['RED'], 0.2),
+    ))
+    fig.add_trace(go.Scatterpolar(
+        r=t_avgs, theta=labels, fill='none', name='Takım Ort.',
+        line=dict(color=COLORS['GRAY_500'], width=2, dash='dash'),
+    ))
     fig.update_layout(
         polar=dict(
-            radialaxis=dict(
-                visible=True,
-                range=[0, 100],
-                tickfont=dict(size=10)
-            ),
-            angularaxis=dict(
-                tickfont=dict(size=11, weight='bold')
-            )
+            bgcolor='#FAFAFA',
+            radialaxis=dict(visible=True, range=[0, 110], gridcolor='#E5E7EB', tickfont=dict(size=10)),
+            angularaxis=dict(tickfont=dict(size=11, family=_FONT, color=COLORS['GRAY_800'], weight='bold'), gridcolor='#E5E7EB'),
         ),
-        title='Atletik Performans Profili (Percentile %)',
-        template='plotly_white',
-        height=500
+        showlegend=True, height=500, paper_bgcolor=COLORS['WHITE'],
+        legend=dict(orientation='h', yanchor='bottom', y=-0.2, xanchor='center', x=0.5)
     )
-    
     return fig
 
-def plot_scatter(data, x_metric, y_metric, color_by='player_name', 
-                 highlight_player=None, show_avg_lines=True):
-    """Scatter plot grafiği"""
-    colors_map = {'TRAINING': '#10B981', 'MATCH': '#EF4444'}
-    
+
+def plot_radar_comparison_multiple(players_dict: dict, team_data: pd.DataFrame, radar_metrics=None) -> go.Figure:
+    if radar_metrics is None: radar_metrics = RADAR_METRICS
+    metrics = [m for m in radar_metrics if m in team_data.columns and team_data[m].notna().any()]
+    if not metrics: return go.Figure()
+
+    labels = [METRICS.get(m, {}).get('display', m).upper() for m in metrics]
     fig = go.Figure()
-    
-    if color_by == 'tip':
-        for session_type in data['tip'].unique():
-            subset = data[data['tip'] == session_type]
-            fig.add_trace(go.Scatter(
-                x=subset[x_metric],
-                y=subset[y_metric],
-                mode='markers',
-                name=session_type,
-                marker=dict(
-                    size=8,
-                    color=colors_map.get(session_type, '#9CA3AF'),
-                    opacity=0.7,
-                    line=dict(width=1, color='white')
-                ),
-                text=subset['player_name'],
-                hovertemplate='<b>%{text}</b><br>X: %{x:.1f}<br>Y: %{y:.1f}'
-            ))
-    else:
-        players = data['player_name'].unique()
-        for player in players:
-            subset = data[data['player_name'] == player]
-            color = '#E30A17' if player == highlight_player else '#9CA3AF'
-            size = 12 if player == highlight_player else 8
-            
-            fig.add_trace(go.Scatter(
-                x=subset[x_metric],
-                y=subset[y_metric],
-                mode='markers',
-                name=player,
-                marker=dict(
-                    size=size,
-                    color=color,
-                    opacity=0.8 if player == highlight_player else 0.5,
-                    line=dict(width=2 if player == highlight_player else 0, color='white')
-                ),
-                hovertemplate=f'<b>{player}</b><br>X: %{{x:.1f}}<br>Y: %{{y:.1f}}'
-            ))
-    
-    if show_avg_lines:
-        x_mean = data[x_metric].mean()
-        y_mean = data[y_metric].mean()
-        
-        fig.add_hline(y=y_mean, line_dash='dash', line_color='#E30A17', opacity=0.5,
-                     annotation_text='Y Ort.')
-        fig.add_vline(x=x_mean, line_dash='dash', line_color='#E30A17', opacity=0.5,
-                     annotation_text='X Ort.')
-    
-    x_label = METRICS.get(x_metric, {}).get('display', x_metric)
-    y_label = METRICS.get(y_metric, {}).get('display', y_metric)
-    
+
+    for i, (name, data) in enumerate(players_dict.items()):
+        vals = []
+        for m in metrics:
+            mx = team_data[m].max()
+            vals.append(min((data[m].mean() / mx) * 100, 110) if mx > 0 else 0)
+
+        clr = PLAYER_PALETTE[i % len(PLAYER_PALETTE)]
+        fig.add_trace(go.Scatterpolar(
+            r=vals, theta=labels, fill='toself', name=name.upper(),
+            line=dict(color=clr, width=2.5), fillcolor=hex_to_rgba(clr, 0.15),
+        ))
+
     fig.update_layout(
-        title=f"{x_label} vs {y_label}",
-        xaxis=dict(title=x_label, gridcolor='#F3F4F6'),
-        yaxis=dict(title=y_label, gridcolor='#F3F4F6'),
-        template='plotly_white',
-        hovermode='closest',
-        height=500
+        polar=dict(
+            bgcolor='#FAFAFA',
+            radialaxis=dict(visible=True, range=[0, 110], gridcolor='#E5E7EB', tickfont=dict(size=10)),
+            angularaxis=dict(tickfont=dict(size=11, family=_FONT, color=COLORS['GRAY_800'], weight='bold'), gridcolor='#E5E7EB'),
+        ),
+        showlegend=True, height=540, paper_bgcolor=COLORS['WHITE'],
+        legend=dict(orientation='h', yanchor='bottom', y=-0.2, xanchor='center', x=0.5)
     )
-    
     return fig
 
-def plot_percentile_gauge(percentile, label):
-    """Percentile göstergesi (gauge)"""
-    color = '#059669' if percentile >= 80 else '#10B981' if percentile >= 65 else '#F59E0B' if percentile >= 50 else '#EF4444'
+
+def plot_day_comparison(camp_data: pd.DataFrame, day1, day2, metric: str) -> go.Figure:
+    d1 = camp_data[camp_data['tarih'].dt.normalize() == pd.Timestamp(day1).normalize()].copy()
+    d2 = camp_data[camp_data['tarih'].dt.normalize() == pd.Timestamp(day2).normalize()].copy()
+
+    if d1.empty or d2.empty: return go.Figure()
+
+    players = sorted(set(d1['player_name']) | set(d2['player_name']))
+    d1_dict = dict(zip(d1['player_name'], d1[metric]))
+    d2_dict = dict(zip(d2['player_name'], d2[metric]))
+
+    v1 = [d1_dict.get(p, None) for p in players]
+    v2 = [d2_dict.get(p, None) for p in players]
+
+    label1 = pd.Timestamp(day1).strftime('%d.%m.%Y')
+    label2 = pd.Timestamp(day2).strftime('%d.%m.%Y')
+    m_info = METRICS.get(metric, {'display': metric, 'unit': ''})
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name=label1, x=players, y=v1, marker=dict(color=COLORS['RED'], opacity=0.9),
+        text=[f"{v:.1f}" if v else '' for v in v1], textposition='outside',
+        textfont=dict(family=_FONT, size=10, weight='bold'),
+    ))
+    fig.add_trace(go.Bar(
+        name=label2, x=players, y=v2, marker=dict(color=COLORS['BLACK'], opacity=0.9),
+        text=[f"{v:.1f}" if v else '' for v in v2], textposition='outside',
+        textfont=dict(family=_FONT, size=10, weight='bold'),
+    ))
+    layout = _base_layout(f"{m_info['display'].upper()} — GÜN KARŞILAŞTIRMASI", height=480)
+    layout.update(barmode='group', xaxis=dict(tickangle=-35), yaxis=dict(title=m_info['unit']))
+    fig.update_layout(**layout)
+    return fig
+
+
+def plot_camp_comparison(camp1_data: pd.DataFrame, camp2_data: pd.DataFrame, metric: str, camp1_label: str = 'KAMP 1', camp2_label: str = 'KAMP 2') -> go.Figure:
+    players = sorted(set(camp1_data['player_name']) | set(camp2_data['player_name']))
+    v1_dict = camp1_data.groupby('player_name')[metric].mean().to_dict()
+    v2_dict = camp2_data.groupby('player_name')[metric].mean().to_dict()
+
+    v1 = [v1_dict.get(p, None) for p in players]
+    v2 = [v2_dict.get(p, None) for p in players]
+
+    m_info = METRICS.get(metric, {'display': metric, 'unit': ''})
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name=camp1_label.upper(), x=players, y=v1, marker=dict(color=COLORS['RED'], opacity=0.9),
+        text=[f"{v:.1f}" if v else '' for v in v1], textposition='outside',
+        textfont=dict(family=_FONT, size=10, weight='bold'),
+    ))
+    fig.add_trace(go.Bar(
+        name=camp2_label.upper(), x=players, y=v2, marker=dict(color=COLORS['BLACK'], opacity=0.9),
+        text=[f"{v:.1f}" if v else '' for v in v2], textposition='outside',
+        textfont=dict(family=_FONT, size=10, weight='bold'),
+    ))
+    layout = _base_layout(f"{m_info['display'].upper()} — KAMP KARŞILAŞTIRMASI", height=480)
+    layout.update(barmode='group', xaxis=dict(tickangle=-35), yaxis=dict(title=m_info['unit']))
+    fig.update_layout(**layout)
+    return fig
+
+
+def plot_daily_ranking(camp_data, tarih, metric, ascending=False):
+    day = camp_data[camp_data['tarih'] == tarih].copy()
+    if day.empty: return None
+        
+    day['_rank'] = day[metric].rank(ascending=False, method='min').astype(int)
+    day = day.sort_values(metric, ascending=ascending).reset_index(drop=True)
+    n = len(day)
     
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number+delta",
-        value=percentile,
-        domain={'x': [0, 1], 'y': [0, 1]},
-        title={'text': label.upper(), 'font': {'size': 13, 'color': '#6B7280', 'weight': 'bold'}},
-        gauge={
-            'axis': {'range': [0, 100], 'tickfont': {'size': 11}},
-            'bar': {'color': color},
-            'steps': [
-                {'range': [0, 50], 'color': '#FEE2E2'},
-                {'range': [50, 65], 'color': '#FEF08A'},
-                {'range': [65, 80], 'color': '#DBEAFE'},
-                {'range': [80, 100], 'color': '#DCFCE7'}
-            ],
-            'threshold': {
-                'line': {'color': '#E30A17', 'width': 2},
-                'thickness': 0.75,
-                'value': percentile
-            }
-        },
-        number={'suffix': '%', 'font': {'size': 24, 'color': color}}
+    bar_c = [day_color(t, max(0.4, 1 - (i/max(n-1,1))*0.55)) for i, t in enumerate(day['tip'])]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=day['player_name'], x=day[metric], orientation='h',
+        marker=dict(color=bar_c, line=dict(color='rgba(0,0,0,0.06)', width=1)),
+        text=[f"  #{r}   {v:.1f}" for r, v in zip(day['_rank'], day[metric])],
+        textposition='inside', insidetextanchor='start',
+        textfont=dict(color='white', size=11, family=_FONT, weight='bold'),
+        hovertemplate='<b>%{y}</b><br>%{x:.2f}<extra></extra>',
     ))
     
-    fig.update_layout(
-        margin=dict(l=20, r=20, t=60, b=20),
-        height=300,
-        font=dict(family='DM Sans', size=11)
-    )
-    
+    m_info = METRICS.get(metric, {'display': metric, 'unit': ''})
+    layout = _base_layout(m_info['display'].upper(), height=max(400, n * 30))
+    layout.update(xaxis=dict(title=m_info['unit']), yaxis=dict(autorange="reversed"), showlegend=False)
+    fig.update_layout(**layout)
     return fig
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ANALİZ FONKSİYONLARI
-# ═══════════════════════════════════════════════════════════════════════════════
 
-def calculate_player_stats(player_data):
-    """Oyuncu istatistiklerini hesaplar"""
-    return {
-        'camp_count': player_data['camp_id'].nunique(),
-        'session_count': len(player_data),
-        'max_speed': player_data['smax_kmh'].max() if 'smax_kmh' in player_data.columns else 0,
-        'avg_distance': player_data['total_distance'].mean() if 'total_distance' in player_data.columns else 0,
-        'total_load': player_data['player_load'].sum() if 'player_load' in player_data.columns else 0
-    }
+def plot_scatter(data: pd.DataFrame, x_metric: str, y_metric: str, color_by: str = 'player_name', highlight_player: str = None, show_avg_lines: bool = True) -> go.Figure:
+    df = data.dropna(subset=[x_metric, y_metric]).copy()
+    if df.empty: return go.Figure()
 
-def calculate_composite_score(player_data, team_data, session_filter="ALL"):
-    """Atletik Performans Skoru hesapla (Composite Score)"""
-    scores = {}
-    
-    if player_data.empty:
-        return {metric: 50 for metric in PRIMARY_METRICS}
-    
-    for metric in PRIMARY_METRICS:
-        if metric not in player_data.columns:
-            continue
+    x_info = METRICS.get(x_metric, {'display': x_metric, 'unit': ''})
+    y_info = METRICS.get(y_metric, {'display': y_metric, 'unit': ''})
+
+    fig = go.Figure()
+    groups = df.groupby(df['tip'].str.upper().str.strip()) if color_by == 'tip' else df.groupby('player_name')
+    palette = {'TRAINING': COLORS['RED'], 'MATCH': COLORS['BLACK']} if color_by == 'tip' else {p: PLAYER_PALETTE[i % len(PLAYER_PALETTE)] for i, p in enumerate(df['player_name'].unique())}
+
+    for group_name, group_df in groups:
+        is_hl   = (highlight_player and group_name == highlight_player)
+        clr     = palette.get(str(group_name).upper() if color_by=='tip' else group_name, COLORS['GRAY_400'])
+        size    = 16 if is_hl else 10
+        opacity = 1.0 if is_hl else 0.7
+        mode    = 'markers+text' if is_hl else 'markers'
+
+        hover  = '<b>%{customdata[0]}</b><br>' + f'{x_info["display"].upper()}: %{{x:.1f}} {x_info["unit"]}<br>' + f'{y_info["display"].upper()}: %{{y:.1f}} {y_info["unit"]}<br>' + '%{customdata[1]}<extra></extra>'
+        customdata = group_df[['player_name','tip']].values if 'player_name' in group_df else None
+
+        fig.add_trace(go.Scatter(
+            x=group_df[x_metric], y=group_df[y_metric], mode=mode, name=str(group_name).upper(),
+            marker=dict(color=clr, size=size, opacity=opacity, line=dict(color='white', width=2 if is_hl else 0.5), symbol='diamond' if is_hl else 'circle'),
+            text=group_df['player_name'].str.upper() if is_hl else None, textposition='top center',
+            textfont=dict(size=11, family=_FONT, color=clr, weight='bold'), hovertemplate=hover, customdata=customdata,
+        ))
+
+    if show_avg_lines:
+        x_avg = df[x_metric].mean(); y_avg = df[y_metric].mean()
+        fig.add_vline(x=x_avg, line_dash='dash', line_color=COLORS['GRAY_500'], line_width=1.5, annotation_text=f"ORT: {x_avg:.1f}")
+        fig.add_hline(y=y_avg, line_dash='dash', line_color=COLORS['GRAY_500'], line_width=1.5, annotation_text=f"ORT: {y_avg:.1f}")
+
+    layout = _base_layout(f"{x_info['display'].upper()} vs {y_info['display'].upper()}", height=600)
+    layout.update(xaxis=dict(title=x_info['display'].upper()), yaxis=dict(title=y_info['display'].upper()))
+    fig.update_layout(**layout)
+    return fig
+
+
+def plot_player_comparison(p1_data, p2_data, metric, team_data=None, p1_name='OYUNCU 1', p2_name='OYUNCU 2'):
+    names, values, colors = [p1_name.upper(), p2_name.upper()], [p1_data[metric].mean(), p2_data[metric].mean()], [COLORS['RED'], COLORS['BLACK']]
+    if team_data is not None and not team_data.empty:
+        names.append('TAKIM ORT.'); values.append(team_data[metric].mean()); colors.append(COLORS['GRAY_500'])
+
+    m_info = METRICS.get(metric, {'display': metric, 'unit': ''})
+    fig = go.Figure(go.Bar(
+        x=names, y=values, marker=dict(color=colors),
+        text=[f"{v:.1f}" for v in values], textposition='outside', textfont=dict(family=_FONT, size=12, weight='bold')
+    ))
+    layout = _base_layout(m_info['display'].upper(), height=360)
+    layout.update(showlegend=False, yaxis=dict(title=m_info['unit']))
+    fig.update_layout(**layout)
+    return fig
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PDF OLUŞTURUCU VE RAPOR HTML ŞABLONU
+# ─────────────────────────────────────────────────────────────────────────────
+
+def generate_pdf_from_html(html_content: str):
+    try:
+        from xhtml2pdf import pisa
+        from io import BytesIO
+        result = BytesIO()
+        pisa_status = pisa.CreatePDF(BytesIO(html_content.encode('utf-8')), dest=result, encoding='utf-8')
+        if not pisa_status.err:
+            return result.getvalue()
+        return None
+    except ImportError:
+        return None
+
+def generate_player_report_html(player_name: str, age_group: str, stats: dict, score_dict: dict, player_data: pd.DataFrame, team_data: pd.DataFrame, camp_name: str = "Kamp Performansı", photo_url: str = "", club_logo_url: str = "") -> str:
+    from datetime import datetime
+    def pct_bar(pct):
+        color = percentile_color(pct)
+        return f'<table width="100%" cellpadding="0" cellspacing="0" style="margin: 0;"><tr><td width="70%" style="background-color: #E5E7EB; height: 10px; border-radius: 4px;"><div style="width: {pct}%; height: 10px; background-color: {color}; border-radius: 4px;"></div></td><td width="30%" style="padding-left: 10px; font-size: 12px; font-weight: bold; color: {color};">%{(pct):.0f}</td></tr></table>'
+
+    composite = score_dict.get('composite', 0)
+    comp_color = percentile_color(composite)
+
+    metric_rows = ""
+    for m in PRIMARY_METRICS:
+        if m not in player_data.columns: continue
+        mi = METRICS.get(m, {'display': m, 'unit': ''})
+        pval = player_data[m].dropna().mean()
+        tmin = team_data[m].dropna().min() if not team_data.empty else 0
+        tavg = team_data[m].dropna().mean() if not team_data.empty else 0
+        tmax = team_data[m].dropna().max() if not team_data.empty else 0
+        pct = score_dict.get(m, 50)
         
-        team_compare = team_data
-        
-        if session_filter != "ALL":
-            player_data = player_data[player_data['tip'].str.upper() == session_filter]
-            team_compare = team_data[team_data['tip'].str.upper() == session_filter]
-        
-        if player_data.empty or team_compare.empty:
-            scores[metric] = 50
-            continue
-        
-        player_val = player_data[metric].mean()
-        team_vals = team_compare[metric].dropna()
-        
-        if len(team_vals) > 0 and not pd.isna(player_val):
-            percentile = (team_vals < player_val).sum() / len(team_vals) * 100
-            scores[metric] = percentile
-        else:
-            scores[metric] = 50
-    
-    # Ortalama composite skor
-    composite = np.mean(list(scores.values()))
-    scores['composite'] = composite
-    
-    return scores
+        metric_rows += f'<tr><td style="padding:14px; font-weight:bold; color:#1F2937; border-bottom:1px solid #E5E7EB; text-transform:uppercase;">{mi["display"]}</td><td style="padding:14px; text-align:center; font-weight:bold; color:#E30A17; border-bottom:1px solid #E5E7EB; font-size:13px;">{pval:.1f} <span style="color:#9CA3AF; font-size:9px;">{mi["unit"]}</span></td><td style="padding:14px; text-align:center; color:#6B7280; font-weight:bold; border-bottom:1px solid #E5E7EB;">{tmin:.1f}</td><td style="padding:14px; text-align:center; color:#6B7280; font-weight:bold; border-bottom:1px solid #E5E7EB;">{tavg:.1f}</td><td style="padding:14px; text-align:center; color:#6B7280; font-weight:bold; border-bottom:1px solid #E5E7EB;">{tmax:.1f}</td><td style="padding:14px; border-bottom:1px solid #E5E7EB; width: 150px;">{pct_bar(pct)}</td></tr>'
 
-def percentile_color(percentile):
-    """Percentile değerine göre renk döner"""
-    if percentile >= 80:
-        return '#059669'  # Koyu yeşil
-    elif percentile >= 65:
-        return '#10B981'  # Yeşil
-    elif percentile >= 50:
-        return '#F59E0B'  # Sarı
-    else:
-        return '#EF4444'  # Kırmızı
+    return f"""<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><style>@page {{ size: A4 portrait; margin: 1.5cm; }} body {{ font-family: Helvetica, Arial, sans-serif; font-size: 11px; color: #111827; background-color: #FFFFFF; }} .header-table {{ width: 100%; background-color: #111827; border-left: 8px solid #E30A17; margin-bottom: 25px; border-radius: 4px; }} .header-td {{ padding: 25px 30px; }} .h-title {{ color: #FFFFFF; font-size: 32px; font-weight: bold; margin: 0; padding: 0; text-transform: uppercase; letter-spacing: 2px; }} .h-sub {{ color: #D1D5DB; font-size: 12px; margin-top: 5px; font-weight: bold; letter-spacing: 1px; }} .h-top {{ color: #9CA3AF; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 5px; font-weight: bold; }} .score-table {{ background-color: #1F2937; border: 3px solid {comp_color}; border-radius: 8px; text-align: center; }} .score-td {{ padding: 15px; }} .score-val {{ color: {comp_color}; font-size: 38px; font-weight: bold; line-height: 1; }} .score-lbl {{ color: #D1D5DB; font-size: 9px; font-weight: bold; text-transform: uppercase; margin-top: 5px; letter-spacing: 1px; }} .section-title {{ font-size: 16px; font-weight: bold; color: #1F2937; border-bottom: 3px solid #E30A17; padding-bottom: 8px; margin-bottom: 20px; margin-top: 15px; text-transform: uppercase; letter-spacing: 1px; display: inline-block; }} .cards-table {{ width: 100%; margin-bottom: 30px; }} .card-td {{ background-color: #F9FAFB; padding: 15px 5px; text-align: center; border: 1px solid #E5E7EB; border-radius: 8px; }} .card-val {{ color: #E30A17; font-size: 24px; font-weight: bold; }} .card-lbl {{ color: #6B7280; font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 6px; letter-spacing: 1px; }} .data-table {{ width: 100%; border-collapse: collapse; margin-bottom: 30px; }} .data-table th {{ background-color: #F3F4F6; padding: 12px 12px; text-align: left; font-size: 10px; font-weight: bold; color: #4B5563; text-transform: uppercase; border-bottom: 2px solid #D1D5DB; letter-spacing: 0.5px; }} .data-table th.center {{ text-align: center; }} .footer {{ text-align: center; font-size: 11px; font-weight: bold; color: #9CA3AF; margin-top: 40px; padding-top: 15px; border-top: 1px solid #E5E7EB; letter-spacing: 0.5px; }}</style></head><body><table class="header-table" cellpadding="0" cellspacing="0"><tr><td width="15%" style="padding: 15px; text-align: center; vertical-align: middle;"><img src="{photo_url}" width="80" height="80" style="border: 3px solid white; border-radius: 8px; margin-bottom: 5px;"><br><img src="{club_logo_url}" width="35" height="35"></td><td class="header-td" width="55%" style="vertical-align: middle;"><div class="h-top">TFF GENÇ MİLLİ TAKIMLAR · ATLETİK PERFORMANS RAPORU</div><div class="h-title">{player_name}</div><div class="h-sub">{age_group} · {camp_name} · {datetime.now().strftime('%d.%m.%Y')}</div></td><td width="30%" align="right" style="padding: 20px; vertical-align: middle;"><table class="score-table" cellpadding="0" cellspacing="0" width="100%"><tr><td class="score-td"><div class="score-val">{composite:.0f}</div><div class="score-lbl">BİLEŞİK PERCENTILE</div></td></tr></table></td></tr></table><div class="section-title">GENEL İSTATİSTİKLER</div><table class="cards-table" cellpadding="0" cellspacing="12"><tr><td class="card-td" width="20%"><div class="card-val">{int(stats.get('camp_count',0))}</div><div class="card-lbl">KAMP SAYISI</div></td><td class="card-td" width="20%"><div class="card-val">{int(stats.get('session_count',0))}</div><div class="card-lbl">KAYITLI GÜN</div></td><td class="card-td" width="20%"><div class="card-val">{int(stats.get('training_count',0))}</div><div class="card-lbl">ANTRENMAN</div></td><td class="card-td" width="20%"><div class="card-val">{int(stats.get('match_count',0))}</div><div class="card-lbl">MAÇ GÜNÜ</div></td><td class="card-td" width="20%"><div class="card-val">{stats.get('max_speed',0):.1f}</div><div class="card-lbl">MAX KM/H</div></td></tr></table><div class="section-title">METRİK BAZLI ANALİZ (MİN / ORT / MAX)</div><table class="data-table"><thead><tr><th>METRİK (DEĞİŞKEN)</th><th class="center">OYUNCU</th><th class="center">TAKIM MİN</th><th class="center">TAKIM ORT.</th><th class="center">TAKIM MAX</th><th>ATLETİK PERFORMANS SKORLAMASI</th></tr></thead><tbody>{metric_rows}</tbody></table><div class="footer">Türkiye Futbol Federasyonu · Genç Milli Takımlar Atletik Performans Sistemi · © {datetime.now().year} TFF</div></body></html>"""
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# KÜMELEME ANALİZİ (CLUSTERING)
-# ═══════════════════════════════════════════════════════════════════════════════
 
-def calculate_player_clustering(age_group_data, selected_player):
-    """Oyuncuyu kümeye göre benzer oyuncuları bulur"""
-    
-    if age_group_data.empty:
-        return None, None
-    
-    # Oyuncu bazlı ortalamalar
-    player_means = age_group_data.groupby('player_name')[PRIMARY_METRICS].mean()
-    
-    if selected_player not in player_means.index:
-        return None, None
-    
-    # NaN değerleri doldur
-    player_means = player_means.fillna(player_means.mean())
-    
-    # Ölçekle
-    scaler = StandardScaler()
-    scaled_data = scaler.fit_transform(player_means)
-    
-    # K-Means clustering (4 küme)
-    kmeans = KMeans(n_clusters=min(4, len(player_means)), random_state=42, n_init=10)
-    clusters = kmeans.fit_predict(scaled_data)
-    
-    player_means['cluster'] = clusters
-    
-    # Seçilen oyuncunun kümesi
-    selected_cluster = player_means.loc[selected_player, 'cluster']
-    
-    # Aynı kümede başka oyuncular
-    similar_players = player_means[
-        (player_means['cluster'] == selected_cluster) & 
-        (player_means.index != selected_player)
-    ]
-    
-    return similar_players, player_means
+# ─────────────────────────────────────────────────────────────────────────────
+# EXPORT BUTONLARI
+# ─────────────────────────────────────────────────────────────────────────────
 
-def get_similarity_score(player1_stats, player2_stats):
-    """İki oyuncu arasında benzerlik skoru (0-100)"""
-    differences = []
+def render_export_buttons(fig=None, df=None, html_report=None, key_prefix='export', filename='tff'):
+    import streamlit as st
     
-    for metric in PRIMARY_METRICS:
-        if metric in player1_stats.index and metric in player2_stats.index:
-            v1 = player1_stats[metric]
-            v2 = player2_stats[metric]
-            
-            if max(v1, v2) > 0:
-                diff = abs(v1 - v2) / max(abs(v1), abs(v2), 1)
-                differences.append(diff)
-    
-    if differences:
-        avg_diff = np.mean(differences)
-        similarity = max(0, 100 * (1 - avg_diff))
-    else:
-        similarity = 0
-    
-    return similarity
+    safe_filename = re.sub(r'[^\w\s-]', '', filename).strip()
+    cols = st.columns(6)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# IMPACT SCORE (ETKİ SKORu) HESAPLAMA
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def calculate_impact_score_engine(camp_data):
-    """Impact Score motor - Günlük objektif performans hesabı"""
-    
-    if camp_data.empty:
-        return camp_data
-    
-    data = camp_data.copy()
-    
-    # Dakikaya göre normalleştir
-    for metric in ['dist_25_plus', 'player_load', 'hsr', 'acc_over_3', 'dec_under_minus_3', 'amp', 'metrage']:
-        if metric in data.columns:
-            data[f'{metric}_pm'] = data[metric] / (data['minutes'] + 1)
-    
-    # Günlük ve oyuncu gruplaması
-    daily_means = data.groupby('tarih')[[m for m in data.columns if '_pm' in m or m == 'smax_kmh']].mean()
-    
-    # Z-Score hesapla
-    for col in daily_means.columns:
-        mean = daily_means[col].mean()
-        std = daily_means[col].std()
-        
-        if std > 0:
-            data[f'{col}_z'] = (data[col] - mean) / std
-        else:
-            data[f'{col}_z'] = 0
-    
-    # Ağırlıklı Impact Score
-    weights = {
-        'dist_25_plus_pm_z': 0.25,
-        'player_load_pm_z': 0.20,
-        'acc_over_3_z': 0.10,
-        'dec_under_minus_3_z': 0.10,
-        'smax_kmh_z': 0.10,
-        'metrage_pm_z': 0.10,
-        'amp_z': 0.10
-    }
-    
-    data['impact_score'] = 0
-    
-    for col, weight in weights.items():
-        if col in data.columns:
-            data['impact_score'] += (data[col] * weight)
-    
-    # 0-100 aralığına ölçekle
-    data['impact_score'] = (data['impact_score'] + 3) / 6 * 100
-    data['impact_score'] = data['impact_score'].clip(0, 100)
-    
-    # Durum etiketi
-    def get_status(score):
-        if score >= 80:
-            return "🟢 Mükemmel"
-        elif score >= 65:
-            return "🔵 İyi"
-        elif score >= 50:
-            return "🟡 Orta"
-        else:
-            return "🔴 Düşük"
-    
-    data['status_tag'] = data['impact_score'].apply(get_status)
-    
-    return data
-
-def calculate_development_stats(current_data, historical_data):
-    """Geçmiş kamplara göre gelişim istatistikleri"""
-    
-    current_avg = current_data.groupby('player_name')[
-        ['impact_score', 'dist_25_plus_pm', 'player_load_pm', 'total_distance_pm']
-    ].mean()
-    
-    historical_avg = historical_data.groupby('player_name')[
-        ['impact_score', 'dist_25_plus_pm', 'player_load_pm', 'total_distance_pm']
-    ].mean()
-    
-    development = pd.DataFrame()
-    
-    for player in current_avg.index:
-        if player in historical_avg.index:
-            for col in current_avg.columns:
-                curr = current_avg.loc[player, col]
-                hist = historical_avg.loc[player, col]
+    if fig is not None:
+        with cols[0]:
+            try:
+                data = fig.to_image(format='png', width=1400, height=700, scale=2)
+                st.download_button("📷 PNG İNDİR", data, f"{safe_filename}.png", "image/png", key=f"{key_prefix}_png", width='stretch')
+            except Exception:
+                st.button("❌ PNG HATASI", disabled=True, key=f"{key_prefix}_png_err", help="Sisteminizde 'kaleido' paketi eksik olabilir.", width='stretch')
                 
-                if hist > 0:
-                    change = ((curr - hist) / hist) * 100
-                else:
-                    change = 0
-                
-                development.loc[player, col] = change
-    
-    return development
+        with cols[1]:
+            data = fig.to_html(full_html=True, include_plotlyjs='cdn').encode('utf-8')
+            st.download_button("🌐 İNTERAKTİF HTML", data, f"{safe_filename}.html", "text/html", key=f"{key_prefix}_html", width='stretch')
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# EXPORT ve TABLO FONKSİYONLARI
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def build_stats_table(player_data, team_data):
-    """Min/Ort/Max tablo oluştur"""
-    result = []
-    
-    for metric in PRIMARY_METRICS:
-        if metric not in player_data.columns:
-            continue
-        
-        p_min = player_data[metric].min()
-        p_mean = player_data[metric].mean()
-        p_max = player_data[metric].max()
-        
-        t_mean = team_data[metric].mean()
-        
-        metric_label = METRICS.get(metric, {}).get('display', metric)
-        
-        result.append({
-            'METRİK': metric_label,
-            'MIN': f"{p_min:.1f}",
-            'ORT': f"{p_mean:.1f}",
-            'MAX': f"{p_max:.1f}",
-            'TAKIM ORT': f"{t_mean:.1f}"
-        })
-    
-    return pd.DataFrame(result)
-
-def render_export_buttons(fig=None, df=None, html_report=None, key_prefix="exp", filename="data"):
-    """Export butonlarını render et"""
-    cols = st.columns([1, 1, 1] if all([fig, df]) else [1, 1])
-    
-    with cols[0]:
-        if fig:
-            export_manager.export_figure_html(fig, filename)
-    
-    with cols[1]:
-        if df is not None:
-            export_manager.export_dataframe_excel(df, filename)
-    
-    if len(cols) > 2 and html_report:
+    if df is not None:
         with cols[2]:
-            st.download_button(
-                label="📄 RAPOR İNDİR",
-                data=html_report,
-                file_name=f"{filename}_Rapor.html",
-                mime="text/html"
-            )
+            data = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📊 EXCEL (CSV)", data, f"{safe_filename}.csv", "text/csv", key=f"{key_prefix}_csv", width='stretch')
 
-def generate_player_report_html(player_name, age_group, stats, score_dict, 
-                               player_data, team_data, camp_name, photo_url, club_logo_url):
-    """Oyuncu rapor kartı HTML oluştur"""
-    
-    composite = score_dict.get('composite', 50)
-    
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="tr">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>{player_name} - Rapor Kartı</title>
-        <style>
-            * {{
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }}
-            body {{
-                font-family: 'DM Sans', -apple-system, sans-serif;
-                background: #F9FAFB;
-                padding: 20px;
-            }}
-            .report {{
-                max-width: 900px;
-                margin: 0 auto;
-                background: white;
-                border-radius: 16px;
-                box-shadow: 0 10px 40px rgba(0,0,0,0.1);
-                overflow: hidden;
-            }}
-            .header {{
-                background: linear-gradient(135deg, #E30A17 0%, #c40810 100%);
-                color: white;
-                padding: 40px;
-                text-align: center;
-            }}
-            .logo-section {{
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                gap: 20px;
-                margin-bottom: 30px;
-            }}
-            .logo-section img {{
-                width: 80px;
-                height: 80px;
-                border-radius: 50%;
-                border: 4px solid white;
-            }}
-            .header h1 {{
-                font-size: 36px;
-                letter-spacing: 2px;
-                margin-bottom: 10px;
-            }}
-            .header p {{
-                font-size: 14px;
-                opacity: 0.9;
-                letter-spacing: 1px;
-            }}
-            .content {{
-                padding: 40px;
-            }}
-            .section {{
-                margin-bottom: 40px;
-            }}
-            .section-title {{
-                font-size: 18px;
-                font-weight: 700;
-                letter-spacing: 1.5px;
-                color: #111827;
-                margin-bottom: 20px;
-                padding-bottom: 10px;
-                border-bottom: 3px solid #E30A17;
-            }}
-            .stats-grid {{
-                display: grid;
-                grid-template-columns: repeat(2, 1fr);
-                gap: 15px;
-                margin-bottom: 30px;
-            }}
-            .stat-card {{
-                background: #F9FAFB;
-                border: 1px solid #E5E7EB;
-                border-radius: 8px;
-                padding: 15px;
-            }}
-            .stat-label {{
-                font-size: 11px;
-                color: #6B7280;
-                font-weight: 800;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                margin-bottom: 6px;
-            }}
-            .stat-value {{
-                font-size: 24px;
-                font-weight: 700;
-                color: #E30A17;
-                font-family: 'Bebas Neue', sans-serif;
-            }}
-            .footer {{
-                text-align: center;
-                padding: 20px;
-                border-top: 1px solid #E5E7EB;
-                color: #6B7280;
-                font-size: 12px;
-            }}
-            .timestamp {{
-                text-align: center;
-                padding: 20px;
-                color: #9CA3AF;
-                font-size: 11px;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="report">
-            <div class="header">
-                <div class="logo-section">
-                    <img src="https://upload.wikimedia.org/wikipedia/tr/b/b9/Türkiye_Futbol_Federasyonu_logo.png" alt="TFF">
-                </div>
-                <h1>{player_name.upper()}</h1>
-                <p>🇹🇷 {age_group} MİLLİ TAKIMI • {camp_name}</p>
-            </div>
-            
-            <div class="content">
-                <div class="section">
-                    <div class="section-title">📊 GENEL İSTATİSTİKLER</div>
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <div class="stat-label">Toplam Kamp</div>
-                            <div class="stat-value">{int(stats.get('camp_count', 0))}</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-label">Seans Sayısı</div>
-                            <div class="stat-value">{int(stats.get('session_count', 0))}</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-label">Maksimum Hız</div>
-                            <div class="stat-value">{stats.get('max_speed', 0):.1f} km/h</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-label">Atletik Performans Skoru</div>
-                            <div class="stat-value">{composite:.0f}%</div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="section">
-                    <div class="section-title">🎯 METRIK PERFORMANSLARI (PERCENTILE)</div>
-                    <div class="stats-grid">
-    """
-    
-    for metric in PRIMARY_METRICS[:8]:
-        score = score_dict.get(metric, 50)
-        label = METRICS.get(metric, {}).get('display', metric)
-        html += f"""
-                        <div class="stat-card">
-                            <div class="stat-label">{label}</div>
-                            <div class="stat-value">{score:.0f}%</div>
-                        </div>
-        """
-    
-    html += f"""
-                    </div>
-                </div>
-            </div>
-            
-            <div class="timestamp">
-                <p>📅 Rapor Oluşturma Tarihi: {datetime.now().strftime('%d.%m.%Y %H:%M')}</p>
-                <p>Türkiye Futbol Federasyonu • Atletik Performans Sistemi</p>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-    
-    return html
-
-print("✅ Yardımcı fonksiyonlar yüklendi | Clustering, Export, Analysis")
+    if html_report is not None:
+        with cols[3]:
+            data_html = html_report.encode('utf-8')
+            st.download_button("📄 RAPOR (HTML)", data_html, f"{safe_filename}.html", "text/html", key=f"{key_prefix}_rhtml", width='stretch')
+        with cols[4]:
+            try:
+                pdf_data = generate_pdf_from_html(html_report)
+                if pdf_data:
+                    st.download_button("📕 RAPOR (PDF)", pdf_data, f"{safe_filename}.pdf", "application/pdf", key=f"{key_prefix}_rpdf", width='stretch')
+                else:
+                    st.button("❌ PDF HATASI", disabled=True, key=f"{key_prefix}_pdf_err", width='stretch')
+            except ImportError:
+                st.button("❌ PDF HATASI", disabled=True, key=f"{key_prefix}_pdf_err_2", help="xhtml2pdf paketi eksik.", width='stretch')
