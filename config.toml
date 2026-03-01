@@ -1,0 +1,26 @@
+# streamlit config.toml
+[theme]
+base = "light"
+primaryColor = "#E30A17"
+backgroundColor = "#F9FAFB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#111827"
+font = "sans serif"
+
+[server]
+headless = true
+port = 8501
+maxUploadSize = 500
+enableXsrfProtection = true
+enableCORS = true
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+
+[logger]
+level = "info"

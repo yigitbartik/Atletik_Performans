@@ -1,329 +1,242 @@
-"""
-ATLETİK PERFORMANS SİSTEMİ
-Ana Uygulaması (app.py)
-"""
+# ═══════════════════════════════════════════════════════════════════════════════
+# TFF PERFORMANS SİSTEMİ - ANA SAYFA (app.py)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 import streamlit as st
 import pandas as pd
-import sqlite3
-from datetime import datetime
-from security_module import SecurityManager, require_login, logout, create_user_management_page, login_page
-from admin_panel import DataManager
-import os
+import plotly.graph_objects as go
+from config import AGE_GROUPS, COLORS
+from database import db_manager
+from styles import inject_styles, sidebar_brand, section_title, page_header
 
-# Sayfa ayarları
 st.set_page_config(
-    page_title="Atletik Performans Sistemi",
-    page_icon="🏆",
+    page_title="TFF Performans Sistemi",
+    page_icon="⚽",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# CSS Styling
-st.markdown("""
-<style>
-    /* Ana temalar */
-    :root {
-        --primary-color: #003366;
-        --secondary-color: #D32F2F;
-        --success-color: #4CAF50;
-        --warning-color: #FF9800;
-        --info-color: #2196F3;
-    }
-    
-    /* Header */
-    .header-main {
-        background: linear-gradient(90deg, #003366, #1a5490);
-        padding: 20px;
-        border-radius: 10px;
-        color: white;
-        margin-bottom: 30px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    
-    .header-main h1 {
-        margin: 0;
-        font-size: 2rem;
-    }
-    
-    /* Section Headers */
-    .section-header {
-        color: #003366;
-        border-bottom: 3px solid #D32F2F;
-        padding-bottom: 10px;
-        margin-top: 20px;
-        margin-bottom: 15px;
-    }
-    
-    /* Cards */
-    .metric-card {
-        background-color: #f8f9fa;
-        padding: 20px;
-        border-radius: 8px;
-        border-left: 4px solid #003366;
-    }
-    
-    /* Success/Error Messages */
-    .success-message {
-        background-color: #d4edda;
-        color: #155724;
-        padding: 12px;
-        border-radius: 5px;
-        margin: 10px 0;
-    }
-    
-    .error-message {
-        background-color: #f8d7da;
-        color: #721c24;
-        padding: 12px;
-        border-radius: 5px;
-        margin: 10px 0;
-    }
-    
-    /* Buttons */
-    .btn-primary {
-        background-color: #003366;
-        color: white;
-        padding: 10px 20px;
-        border-radius: 5px;
-        border: none;
-        cursor: pointer;
-    }
-    
-    .btn-secondary {
-        background-color: #D32F2F;
-        color: white;
-        padding: 10px 20px;
-        border-radius: 5px;
-        border: none;
-        cursor: pointer;
-    }
-    
-    /* Sidebar */
-    [data-testid="stSidebar"] {
-        background-color: #f5f5f5;
-    }
-    
-    /* Tables */
-    table {
-        font-size: 0.9em;
-    }
-    
-    /* DataFrames */
-    .dataframe {
-        font-size: 0.85em !important;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Streamlit timeout sorunu çözmesi
+st.set_page_config(client={'maxMessageSize': 5 * 1024 * 1024})
 
-# Session State Başlat
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.username = None
-    st.session_state.user_rol = None
-    st.session_state.user_yas_grubu = None
+inject_styles()
 
-if 'page' not in st.session_state:
-    st.session_state.page = "Ana Sayfa"
-
-# ============================================================
-# GİRİŞ KONTROLÜ
-# ============================================================
-
-if not st.session_state.logged_in:
-    login_page()
-    st.stop()
-
-# ============================================================
-# ÇIKTI YAPAN KULLANICI İÇİN ANA SAYFA
-# ============================================================
-
-# Sidebar
+# ─── SIDEBAR ─────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("""
-    <div style='text-align: center; padding: 20px 0;'>
-        <h2 style='color: #003366;'>🏆 TFF</h2>
-        <p style='color: #666; font-size: 0.9em;'>Genç Milli Takımlar<br/>Atletik Performans Sistemi</p>
-    </div>
-    """, unsafe_allow_html=True)
+    sidebar_brand()
     
-    st.markdown("---")
+    st.markdown('<div class="sidebar-label">📂 VERİ YÜKLE</div>', unsafe_allow_html=True)
+    uploaded_file = st.file_uploader("Excel Dosyası", type=['xlsx'], label_visibility='collapsed')
     
-    st.subheader(f"👤 {st.session_state.username}")
-    st.write(f"**Rol:** {st.session_state.user_rol.upper()}")
-    st.write(f"**Yaş Grubu:** {st.session_state.user_yas_grubu}")
+    if uploaded_file:
+        age_group = st.selectbox("Yaş Grubu Seçin", AGE_GROUPS, key="upload_age")
+        if st.button("✅ VERİTABANıNA AKTAR", use_container_width=True, type="primary"):
+            with st.spinner("⏳ Yükleniyor..."):
+                result = db_manager.excel_to_db(uploaded_file, age_group)
+                if result['status'] == 'success':
+                    st.success(result['message'])
+                    st.rerun()
+                else:
+                    st.error(result['message'])
     
-    st.markdown("---")
+    st.divider()
     
-    # Rol bazlı menü
-    if st.session_state.user_rol == 'admin':
-        menu_options = [
-            "📊 Ana Sayfa",
-            "⚙️ Admin Panel",
-            "👥 Kullanıcı Yönetimi",
-            "📈 Analiz & Raporlar",
-            "🎯 Scout Analizi",
-            "📋 Veri Yönetimi",
-            "⚡ Sistem Ayarları"
-        ]
-    elif st.session_state.user_rol == 'editor':
-        menu_options = [
-            "📊 Ana Sayfa",
-            "📈 Analiz & Raporlar",
-            "🎯 Scout Analizi",
-            "📋 Veri Girişi",
-        ]
-    else:  # viewer
-        menu_options = [
-            "📊 Ana Sayfa",
-            "📈 Analiz & Raporlar",
-            "🎯 Scout Analizi",
-        ]
-    
-    selected_page = st.radio("📍 Sayfalar", menu_options, label_visibility="collapsed")
-    
-    st.markdown("---")
-    
-    if st.button("🚪 Çıkış Yap", use_container_width=True, type="secondary"):
-        logout()
-
-# ============================================================
-# SAYFA ROUTER
-# ============================================================
-
-dm = DataManager()
-
-if selected_page == "📊 Ana Sayfa":
-    st.markdown("""
-    <div class="header-main">
-        <h1>🏆 Genç Milli Takımlar Atletik Performans Sistemi</h1>
-        <p style='margin-top: 10px; font-size: 1.1em;'>TFF Teknik Direktörlüğü - Akademik ve Bilimsel Destek</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Hızlı İstatistikler
-    st.markdown('<h3 class="section-header">📊 Genel İstatistikler</h3>', unsafe_allow_html=True)
-    
-    # Veri sayıları
-    conn = sqlite3.connect("athletic_performance.db")
-    cursor = conn.cursor()
-    
-    cursor.execute('SELECT COUNT(DISTINCT kamp_id) FROM camp_info')
-    total_camps = cursor.fetchone()[0]
-    
-    cursor.execute('SELECT COUNT(DISTINCT oyuncu_id) FROM player_info')
-    total_players = cursor.fetchone()[0]
-    
-    cursor.execute('SELECT COUNT(*) FROM training_match_data')
-    total_sessions = cursor.fetchone()[0]
-    
-    cursor.execute('SELECT AVG(total_distance) FROM training_match_data WHERE tip = "Training"')
-    avg_distance_training = cursor.fetchone()[0] or 0
-    
-    cursor.close()
-    conn.close()
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("📍 Toplam Kamplar", total_camps)
-    with col2:
-        st.metric("👥 Toplam Oyuncular", total_players)
-    with col3:
-        st.metric("⚽ Toplam Seanslar", total_sessions)
-    with col4:
-        st.metric("📏 Ort. Training Mesafesi", f"{avg_distance_training:,.0f} m")
-    
-    st.markdown("---")
-    
-    # Son Kamplar
-    st.markdown('<h3 class="section-header">🏕️ Son Kamplar</h3>', unsafe_allow_html=True)
-    
-    camps = dm.get_all_camps()
-    if not camps.empty:
-        camps = camps.sort_values('baslangic_tarihi', ascending=False).head(5)
-        
-        for idx, camp in camps.iterrows():
-            col1, col2, col3 = st.columns([2, 1, 1])
+    st.markdown('<div class="sidebar-label">📊 SİSTEM ÖZETİ</div>', unsafe_allow_html=True)
+    try:
+        all_data = db_manager.get_all_data()
+        if not all_data.empty:
+            col1, col2 = st.columns(2)
+            match_data = all_data[all_data['tip'].str.upper() == 'MATCH']
+            training_data = all_data[all_data['tip'].str.upper() == 'TRAINING']
+            
             with col1:
-                st.write(f"**{camp['kamp_adi']}** ({camp['yas_grubu']})")
-                st.caption(f"📅 {camp['baslangic_tarihi']} → {camp['bitis_tarihi']}")
+                st.metric("🏃 Oyuncu", all_data['player_name'].nunique())
+                st.metric("⚽ Kamp", all_data['camp_id'].nunique())
+            
             with col2:
-                st.write(f"📍 {camp['kamp_yeri']}")
-            with col3:
-                st.write(f"👨‍🏫 {camp['teknik_direktor']}")
-    else:
-        st.info("Henüz kamp kaydı yok.")
+                st.metric("📋 Kayıt", len(all_data))
+                st.metric("🎯 Maç Günü", match_data['tarih'].nunique() if not match_data.empty else 0)
+    except:
+        pass
     
-    st.markdown("---")
+    st.divider()
     
-    # Hoş Geldin Mesajı
-    st.info(f"👋 Hoş geldiniz, {st.session_state.username}! Sistemin gücünü keşfetmek için menüdeki sayfaları ziyaret edin.")
+    st.markdown('<div class="sidebar-label">⚙️ YÖNETİM</div>', unsafe_allow_html=True)
+    if st.button("🔐 Admin Paneline Git", use_container_width=True):
+        st.switch_page("pages/09_Admin_Panel.py")
 
-elif selected_page == "⚙️ Admin Panel":
-    if st.session_state.user_rol != 'admin':
-        st.error("❌ Bu sayfaya erişim izniniz yok!")
+# ─── HEADER ──────────────────────────────────────────────────────────────────
+page_header("⚽", "TFF PERFORMANS SİSTEMİ",
+            "Türkiye Futbol Federasyonu • Genç Milli Takımlar Atletik Veri Platformu")
+
+st.divider()
+
+# ─── NAVİGASYON KARTLARI ─────────────────────────────────────────────────────
+section_title("HIZLI ERİŞİM MENÜSÜ", "🚀")
+
+nav_items = [
+    ("02_Kamp_Analizi.py", "⚽", "KAMP ANALİZİ", "Günlük & kamp bazlı sıralamalar"),
+    ("03_Oyuncu_Profili.py", "🏃", "OYUNCU PROFİLİ", "Bireysel performans & radar"),
+    ("04_Karsilastirma.py", "⚔️", "KARŞILAŞTIRMA", "H2H · Kamp karşılaştırması"),
+    ("05_Siralamalar.py", "📊", "SIRALAMALAR", "Günlük · Kamp · Percentile"),
+    ("06_Scatter.py", "🎯", "SCATTER ANALİZİ", "İki metrik dağılımı"),
+]
+
+cols = st.columns(5)
+for i, (page, icon, title, desc) in enumerate(nav_items):
+    with cols[i]:
+        border = COLORS['RED']
+        shadow = "0 4px 16px rgba(227,10,23,0.2)"
+        
+        st.markdown(f"""
+        <div style="background: white; border: 2px solid {border}; border-radius: 14px;
+                   padding: 20px 14px 14px; text-align: center; box-shadow: {shadow};
+                   height: 130px; transition: all 0.3s ease; cursor: pointer;">
+            <div style="font-size: 28px; margin-bottom: 8px;">{icon}</div>
+            <div style="font-family: 'Bebas Neue', sans-serif; font-size: 14px;
+                       letter-spacing: 1.5px; color: {COLORS['GRAY_900']};
+                       font-weight: 700; margin-bottom: 4px;">
+                {title}
+            </div>
+            <div style="font-size: 10px; color: {COLORS['GRAY_500']};">
+                {desc}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button(f"GİT →", key=f"nav_{i}", use_container_width=True):
+            st.switch_page(f"pages/{page}")
+
+st.divider()
+
+# ─── YAŞ GRUBU DURUMU ────────────────────────────────────────────────────────
+try:
+    all_data = db_manager.get_all_data()
+    
+    if not all_data.empty:
+        section_title("YAŞ GRUBU DURUMU", "📈")
+        
+        ag_cols = st.columns(len(AGE_GROUPS))
+        for i, ag in enumerate(AGE_GROUPS):
+            ag_data = all_data[all_data['age_group'] == ag]
+            has = not ag_data.empty
+            
+            with ag_cols[i]:
+                if has:
+                    pc = ag_data['player_name'].nunique()
+                    cc = ag_data['camp_id'].nunique()
+                    rc = len(ag_data)
+                    
+                    st.markdown(f"""
+                    <div class="ag-card has-data">
+                        <div class="ag-label">{ag}</div>
+                        <div class="ag-stat"><b>{pc}</b> Oyuncu · <b>{cc}</b> Kamp</div>
+                        <div class="ag-stat" style="font-size: 11px; color: {COLORS['GRAY_400']};
+                                                   margin-top: 4px;">{rc} kayıt</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if st.button("Detaylar →", key=f"ag_{i}", use_container_width=True):
+                        st.session_state['selected_age_group'] = ag
+                        st.switch_page("pages/02_Kamp_Analizi.py")
+                else:
+                    st.markdown(f"""
+                    <div class="ag-card no-data">
+                        <div class="ag-label">{ag}</div>
+                        <div class="ag-stat" style="color: {COLORS['GRAY_400']};">VERİ YOK</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # ─── GENEL İSTATİSTİKLER ─────────────────────────────────────────────
+        section_title("GENEL İSTATİSTİKLER", "📊")
+        k1, k2, k3, k4, k5, k6 = st.columns(6)
+        
+        match_df = all_data[all_data['tip'].str.upper() == 'MATCH']
+        training_df = all_data[all_data['tip'].str.upper() == 'TRAINING']
+        
+        metrics_data = [
+            (k1, "🏃", "TOPLAM OYUNCU", all_data['player_name'].nunique()),
+            (k2, "⚽", "TOPLAM KAMP", all_data['camp_id'].nunique()),
+            (k3, "📋", "TOPLAM KAYIT", len(all_data)),
+            (k4, "🎯", "TOPLAM MAÇ GÜNÜ", match_df['tarih'].nunique() if not match_df.empty else 0),
+            (k5, "📏", "ORT. MESAFE", f"{all_data['total_distance'].mean():.0f} m"),
+            (k6, "⚡", "MAX HIZ (GENEL)", f"{all_data['smax_kmh'].max():.1f} km/h"),
+        ]
+        
+        for col, icon, label, value in metrics_data:
+            with col:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div style="font-size: 16px; margin-bottom: 8px;">{icon}</div>
+                    <div class="sc-label">{label}</div>
+                    <div class="sc-val">{value}</div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # ─── TOP PERFORMANSLAR ────────────────────────────────────────────────
+        section_title("EN YÜKSEK 10 MESAFE PERFORMANSI", "🏆")
+        
+        top10 = all_data.nlargest(10, 'total_distance')[[
+            'player_name', 'age_group', 'tarih', 'tip', 'total_distance', 'smax_kmh', 'player_load'
+        ]].copy()
+        
+        top10['tarih'] = top10['tarih'].dt.strftime('%d.%m.%Y')
+        top10.columns = ['OYUNCU', 'YAŞ GRUBU', 'TARİH', 'SEANS TİPİ', 'MESAFE (m)', 'MAX HIZ (km/h)', 'YÜK']
+        
+        st.dataframe(
+            top10.style.background_gradient(cmap='Reds', subset=['MESAFE (m)'], vmin=top10['MESAFE (m)'].min()),
+            use_container_width=True, hide_index=True, height=450
+        )
+        
+        st.divider()
+        
+        # ─── TOP 10 KAMPLAR ──────────────────────────────────────────────────
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            section_title("EN ÇOK KAMPA ÇIKAN OYUNCULAR", "📊")
+            top_camps = all_data.groupby('player_name').size().nlargest(10).reset_index(name='Seans Sayısı')
+            st.dataframe(top_camps.rename(columns={'player_name': 'OYUNCU'}), use_container_width=True, hide_index=True)
+        
+        with col2:
+            section_title("EN ÇOK ANTRENMANA ÇIKAN", "💪")
+            top_training = training_df.groupby('player_name').size().nlargest(10).reset_index(name='Antrenman Sayısı')
+            st.dataframe(top_training.rename(columns={'player_name': 'OYUNCU'}), use_container_width=True, hide_index=True)
+        
+        with col3:
+            section_title("EN ÇOK MAÇA ÇIKAN", "⚽")
+            top_matches = match_df.groupby('player_name').size().nlargest(10).reset_index(name='Maç Sayısı')
+            st.dataframe(top_matches.rename(columns={'player_name': 'OYUNCU'}), use_container_width=True, hide_index=True)
+    
     else:
-        from admin_panel import main as admin_main
-        st.markdown('<h2 class="section-header">⚙️ Admin Panel - Veri Yönetimi</h2>', unsafe_allow_html=True)
-        admin_main()
+        st.markdown(f"""
+        <div style="text-align: center; padding: 80px 20px; background: {COLORS['GRAY_50']};
+                   border-radius: 16px; border: 2px dashed {COLORS['GRAY_300']};
+                   margin-top: 40px;">
+            <div style="font-size: 52px; margin-bottom: 16px;">📂</div>
+            <div style="font-family: 'Bebas Neue', sans-serif; font-size: 30px;
+                       letter-spacing: 2px; color: {COLORS['GRAY_700']};">
+                HENÜZ VERİ YÜKLENMEDİ
+            </div>
+            <div style="font-size: 13px; color: {COLORS['GRAY_500']}; margin-top: 12px;">
+                Sol panelden Excel dosyanızı yükleyerek sistemi başlatın
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-elif selected_page == "👥 Kullanıcı Yönetimi":
-    if st.session_state.user_rol != 'admin':
-        st.error("❌ Bu sayfaya erişim izniniz yok!")
-    else:
-        st.markdown('<h2 class="section-header">👥 Kullanıcı Yönetimi</h2>', unsafe_allow_html=True)
-        create_user_management_page()
+except Exception as e:
+    st.error(f"❌ Hata oluştu: {str(e)}")
 
-elif selected_page == "📈 Analiz & Raporlar":
-    from analysis_pages import main as analysis_main
-    analysis_main(dm)
+st.divider()
 
-elif selected_page == "🎯 Scout Analizi":
-    from scout_pages import main as scout_main
-    scout_main(dm)
-
-elif selected_page == "📋 Veri Girişi":
-    st.markdown('<h2 class="section-header">📋 Veri Girişi</h2>', unsafe_allow_html=True)
-    st.info("Performans verisi girmek için Admin Panel'den 'Performans Verisi' bölümünü kullanınız.")
-
-elif selected_page == "⚡ Sistem Ayarları":
-    if st.session_state.user_rol != 'admin':
-        st.error("❌ Bu sayfaya erişim izniniz yok!")
-    else:
-        st.markdown('<h2 class="section-header">⚡ Sistem Ayarları</h2>', unsafe_allow_html=True)
-        
-        st.subheader("Veritabanı Bilgileri")
-        
-        conn = sqlite3.connect("athletic_performance.db")
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = cursor.fetchall()
-        
-        st.write("**Tablolar:**")
-        for table in tables:
-            cursor.execute(f"SELECT COUNT(*) FROM {table[0]}")
-            count = cursor.fetchone()[0]
-            st.write(f"- {table[0]}: {count} kayıt")
-        
-        cursor.close()
-        conn.close()
-        
-        st.markdown("---")
-        
-        if st.button("🔄 Veritabanını Sıfırla (UYARI: TÜM VERİLER SİLİNECEK!)", type="secondary"):
-            st.warning("Bu işlem tüm verileri silecektir! Lütfen yöneticiye başvurunuz.")
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: #666; font-size: 0.85em; padding: 20px 0;'>
-    <p>🏆 <strong>Türkiye Futbol Federasyonu - Genç Milli Takımlar</strong></p>
-    <p>📧 Sorular için: admin@tff.org.tr | 📞 Destek: +90 (555) 123-4567</p>
-    <p>© 2025 - Tüm Hakları Saklıdır | Gizlilik Politikası</p>
+st.markdown(f"""
+<div class="tff-footer">
+    <p><strong>Türkiye Futbol Federasyonu</strong></p>
+    <p>Genç Milli Takımlar Atletik Performans Sistemi • v5.0</p>
+    <p style="margin-top: 10px; font-size: 10px;">© 2026 TFF · Tüm hakları saklıdır</p>
 </div>
 """, unsafe_allow_html=True)
